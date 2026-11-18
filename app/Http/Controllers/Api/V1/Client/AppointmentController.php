@@ -7,6 +7,8 @@ use App\Exceptions\BusinessRuleException;
 use App\Http\Resources\AppointmentResource;
 use App\Models\Appointment;
 use App\Services\AppointmentService;
+use App\Services\CheckoutService;
+use App\Services\LoyaltyService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
@@ -14,7 +16,11 @@ class AppointmentController extends ClientController
 {
     private const WITH = ['service', 'doctor.user', 'branch', 'payment', 'review'];
 
-    public function __construct(private AppointmentService $appointments) {}
+    public function __construct(
+        private AppointmentService $appointments,
+        private LoyaltyService $loyalty,
+        private CheckoutService $checkout,
+    ) {}
 
     /**
      * tab=upcoming  approved, not yet started
@@ -51,10 +57,23 @@ class AppointmentController extends ClientController
             'date' => ['required', 'date_format:Y-m-d'],
             'time' => ['required', 'date_format:H:i'],
             'note' => ['nullable', 'string', 'max:1000'],
+            'voucher_id' => ['nullable', 'integer'],
+            'gift_card_id' => ['nullable', 'integer'],
         ]);
         $appt = $this->appointments->book($this->client($request), $data);
 
-        return new AppointmentResource($appt->load(self::WITH));
+        // Vouchers / gift cards chosen on the booking summary are applied to the new bill.
+        // If one can't be used, the booking still stands and the reason is returned in meta.credits_error.
+        $error = null;
+        if (! empty($data['voucher_id']) || ! empty($data['gift_card_id'])) {
+            try {
+                $this->checkout->apply($appt->payment, array_filter(['voucher_id' => $data['voucher_id'] ?? null, 'gift_card_id' => $data['gift_card_id'] ?? null]));
+            } catch (BusinessRuleException $e) {
+                $error = ['code' => $e->errorCode, 'message' => $e->getMessage()];
+            }
+        }
+
+        return (new AppointmentResource($appt->refresh()->load(self::WITH)))->additional(['meta' => ['credits_error' => $error]]);
     }
 
     public function show(Request $request, Appointment $appointment): AppointmentResource
@@ -83,6 +102,7 @@ class AppointmentController extends ClientController
             throw BusinessRuleException::make('cannot_review', 'You can review a treatment once, after it is completed.');
         }
         $appointment->review()->create([...$data, 'doctor_id' => $appointment->doctor_id, 'client_id' => $appointment->client_id]);
+        $this->loyalty->creditReview($appointment->load('client'));
 
         return new AppointmentResource($appointment->load(self::WITH));
     }

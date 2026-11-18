@@ -133,6 +133,10 @@ class AcademyService
     public function addModule(Course $course, string $title): CourseModule
     {
         $week = (int) $course->modules()->max('week') + 1;
+        $max = (int) config('lavish.course_weeks');
+        if ($week > $max) {
+            throw BusinessRuleException::make('course_full', "Courses are {$max} weeks long — this course already has a module for every week.");
+        }
 
         return $course->modules()->create(['week' => $week, 'title' => $title, 'published' => false]);
     }

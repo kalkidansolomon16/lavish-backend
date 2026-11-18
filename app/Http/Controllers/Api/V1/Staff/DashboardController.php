@@ -41,7 +41,7 @@ class DashboardController extends StaffController
         $user = $request->user()->loadMissing('roles', 'doctor');
         $roles = $user->roles->sortBy('level');
         $portal = $request->string('portal')->value();
-        $portal = $roles->firstWhere('key', $portal)?->key ?? $roles->first()?->key ?? 'team';
+        $portal = $roles->firstWhere('key', $portal)?->key ?? $roles->first()?->key ?? 'nurse';
         $doctor = $user->doctor;
         $today = CarbonImmutable::today();
 
@@ -51,7 +51,7 @@ class DashboardController extends StaffController
         ];
 
         $mine = fn ($q) => $portal === 'doctor' && $doctor ? $q->where('doctor_id', $doctor->id) : $q;
-        if (in_array($portal, ['ceo', 'reception', 'doctor'], true)) {
+        if (in_array($portal, ['ceo', 'reception', 'doctor', 'nurse'], true)) {
             $data['today_schedule'] = AppointmentResource::collection($mine(Appointment::query())->with('client', 'doctor.user', 'service', 'branch')
                 ->where('status', AppointmentStatus::Approved)->whereBetween('starts_at', [$today, $today->endOfDay()])->orderBy('starts_at')->get());
             $data['upcoming'] = AppointmentResource::collection($mine(Appointment::query())->with('client', 'doctor.user', 'service', 'branch')
@@ -126,6 +126,10 @@ class DashboardController extends StaffController
                 $stat('chats', 'Chats unlocked', Client::query()->whereHas('appointments', fn ($a) => $a->where('doctor_id', $doctor->id)->where('status', AppointmentStatus::Completed))->count()),
             ] : [],
             'teacher' => $doctor ? $this->teacherStats($user, $doctor, $stat) : [],
+            'nurse' => [
+                $stat('today_appointments', 'Appointments today', Appointment::query()->where('status', AppointmentStatus::Approved)->whereBetween('starts_at', [$today, $today->endOfDay()])->count(), true),
+                $stat('pending_appointments', 'Waiting for approval', Appointment::query()->where('status', AppointmentStatus::Pending)->count()),
+            ],
             default => [],
         };
     }

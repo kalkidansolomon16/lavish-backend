@@ -43,6 +43,10 @@ class CatalogController extends Controller
             'booking_horizon_days' => config('lavish.booking.horizon_days'),
             'online_consultation' => $online ? new ServiceResource($online) : null,
             'payment_methods' => collect(PaymentMethod::online())->map(fn ($m) => ['value' => $m, 'label' => PaymentMethod::from($m)->label()]),
+            // false → hide Chapa; clients pay by any means and upload the receipt (POST /client/payments/{id}/receipt)
+            'online_payments_enabled' => config('lavish.payments.online_enabled'),
+            'payment_instructions' => config('lavish.payments.instructions'),
+            'receipt_methods' => collect(PaymentMethod::desk())->map(fn ($m) => ['value' => $m, 'label' => PaymentMethod::from($m)->label()]),
             'order_payment_methods' => collect(OrderPaymentMethod::cases())->map(fn ($m) => ['value' => $m->value, 'label' => $m->label()]),
             'product_categories' => Product::query()->active()->distinct()->orderBy('category')->pluck('category'),
             'news_tags' => News::TAGS,

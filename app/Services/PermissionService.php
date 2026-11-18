@@ -31,11 +31,24 @@ class PermissionService
             }
 
             $sort = 0;
+            $added = [];
             foreach (config('permissions.catalogue') as $group => $items) {
                 foreach ($items as $key => $def) {
-                    Permission::updateOrCreate(['key' => $key], [
+                    $p = Permission::updateOrCreate(['key' => $key], [
                         'label' => $def[0], 'group' => $group, 'only_roles' => $def[1] ?? null, 'sort' => $sort++,
                     ]);
+                    if ($p->wasRecentlyCreated) {
+                        $added[] = $p;
+                    }
+                }
+            }
+
+            // A permission added to the catalogue later (e.g. Rewards & gift cards) is granted to the
+            // roles whose defaults include it, without touching grants a manager changed by hand.
+            foreach (Role::all() as $role) {
+                $ids = collect($added)->filter(fn (Permission $p) => in_array($p->key, config("permissions.defaults.{$role->key}", []), true) && $p->appliesTo($role->key))->pluck('id');
+                if ($ids->isNotEmpty() && $role->permissions()->exists()) {
+                    $role->permissions()->syncWithoutDetaching($ids);
                 }
             }
 

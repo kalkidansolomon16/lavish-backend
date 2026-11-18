@@ -11,6 +11,9 @@ return [
     'delivery_fee' => (int) env('LAVISH_DELIVERY_FEE', 150),
 
     // Phone number students call to enrol (shown in the app; there is no student sign-up).
+    // Every Lavish Academy course lasts this many weeks (one module per week).
+    'course_weeks' => 5,
+
     'academy_phone' => env('LAVISH_ACADEMY_PHONE', '+251911001122'),
 
     // Link sent to clients by SMS so they can download the app.
@@ -59,7 +62,22 @@ return [
     ],
 
     'push' => [
-        'driver' => env('PUSH_DRIVER', 'log'), // log (FCM to be added when the Firebase project exists)
+        // log = write to the log only (development); fcm = real phone notifications through Firebase.
+        'driver' => env('PUSH_DRIVER', 'log'),
+        // Firebase service-account key (Project settings → Service accounts → Generate new private key).
+        'fcm_credentials' => env('FIREBASE_CREDENTIALS', 'storage/app/firebase.json'),
+    ],
+
+    // While online payment is off, clients pay by any of these and upload the receipt in the app;
+    // reception accepts it in Web → Payments. Fill in the real account details in .env.
+    'payments' => [
+        'online_enabled' => (bool) env('ONLINE_PAYMENTS_ENABLED', false), // true = Chapa checkout in the app
+        'instructions' => array_values(array_filter([
+            env('PAY_TELEBIRR') ? ['method' => 'telebirr', 'label' => 'Telebirr', 'details' => env('PAY_TELEBIRR')] : null,
+            env('PAY_CBE') ? ['method' => 'cbe_birr', 'label' => 'CBE account', 'details' => env('PAY_CBE')] : null,
+            env('PAY_BANK') ? ['method' => 'bank_transfer', 'label' => 'Bank transfer', 'details' => env('PAY_BANK')] : null,
+            ['method' => 'cash', 'label' => 'Cash at reception', 'details' => 'Pay at any Lavish branch front desk.'],
+        ])),
     ],
 
     'chapa' => [

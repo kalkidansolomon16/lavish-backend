@@ -48,6 +48,11 @@ class PrescriptionController extends StaffController
             'items.*.custom_name' => ['nullable', 'required_without:items.*.product_id', 'string', 'max:160'],
             'items.*.quantity' => ['required', 'integer', 'min:1', 'max:20'],
             'items.*.instructions' => ['nullable', 'string', 'max:255'],
+            // Reminders in the client's app: times of day + how many days (empty = no reminders).
+            'items.*.reminder_times' => ['nullable', 'array', 'max:6'],
+            'items.*.reminder_times.*' => ['date_format:H:i'],
+            'items.*.starts_on' => ['nullable', 'date'],
+            'items.*.duration_days' => ['nullable', 'integer', 'min:1', 'max:365'],
         ]);
         $rx = $this->prescriptions->create($this->myDoctor($request), Client::findOrFail($data['client_id']), $data['note'] ?? null, $data['items']);
 

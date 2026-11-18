@@ -37,12 +37,13 @@ Tests run on an in-memory SQLite database and never touch MySQL.
 ## Production checklist
 
 1. `APP_ENV=production`, `APP_DEBUG=false`, real `APP_URL`, HTTPS.
-2. `php artisan migrate --force` then `php artisan db:seed --class=RolePermissionSeeder --force` (no demo data in production) and `php artisan lavish:create-ceo`.
+2. `php artisan migrate --force` then `php artisan db:seed --class=RolePermissionSeeder --force` and `php artisan db:seed --class=LoyaltySeeder --force` (Lavish Rewards & gift card starting values — no demo data in production) and `php artisan lavish:create-ceo`.
 3. `LAVISH_CORS_ORIGINS=https://<portal domain>`.
 4. SMS: `SMS_DRIVER=afromessage` + `AFROMESSAGE_*` keys (verify the request format with your AfroMessage account first).
 5. Payments: `CHAPA_MODE=live`, `CHAPA_SECRET_KEY`, `CHAPA_WEBHOOK_SECRET`; set the webhook URL in the Chapa dashboard to `https://<api>/api/v1/webhooks/chapa`. Test with Chapa **test keys** before live keys.
 6. Mail: configure `MAIL_*` (order status emails).
-7. Queue worker + scheduler if you later move notifications to the queue.
+7. **Scheduler (required for Lavish Rewards & gift cards):** one cPanel cron job `* * * * * php /home/USER/lavish_backend/artisan schedule:run` — it expires points/vouchers nightly, sends expiry reminders and birthday points daily, and delivers scheduled gift cards every 5 minutes.
+8. Queue worker if you later move notifications to the queue.
 
 ## Architecture
 

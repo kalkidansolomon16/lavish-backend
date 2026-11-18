@@ -44,6 +44,8 @@ class ComplaintController extends StaffController
             'body' => ['required', 'string', 'max:4000'],
             'status' => ['nullable', Rule::in(ComplaintStatus::values())],
         ]);
+        // Replying may also set the status — that part needs complaints.resolve.
+        abort_if(isset($data['status']) && ! $request->user()->hasPermission('complaints.resolve'), 403, 'You can reply, but not change the status.');
         $complaint->messages()->create(['user_id' => $request->user()->id, 'from_staff' => true, 'body' => $data['body']]);
         $status = isset($data['status']) ? ComplaintStatus::from($data['status']) : ($complaint->status === ComplaintStatus::Open ? ComplaintStatus::InReview : $complaint->status);
         $this->applyStatus($complaint, $status);

@@ -122,7 +122,7 @@ class StaffMemberController extends StaffController
     /** Edit position / branch of a staff member below you. */
     public function update(Request $request, User $member): StaffMemberResource
     {
-        abort_unless($request->user()->hasPermission('staff.add') && $member->load('roles')->level() > $request->user()->level(), 403);
+        abort_unless($request->user()->hasPermission('staff.edit') && $member->load('roles')->level() > $request->user()->level(), 403);
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:120'],
             'email' => ['sometimes', 'nullable', 'email', Rule::unique('users', 'email')->ignore($member->id)],

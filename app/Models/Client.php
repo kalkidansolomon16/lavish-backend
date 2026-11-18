@@ -72,6 +72,44 @@ class Client extends Model
         return $this->hasMany(Complaint::class);
     }
 
+    public function loyalty(): HasOne
+    {
+        return $this->hasOne(ClientLoyalty::class);
+    }
+
+    public function pointsLedger(): HasMany
+    {
+        return $this->hasMany(PointsLedger::class);
+    }
+
+    public function pointsRequests(): HasMany
+    {
+        return $this->hasMany(PointsRequest::class);
+    }
+
+    public function vouchers(): HasMany
+    {
+        return $this->hasMany(RewardRedemption::class);
+    }
+
+    /** Gift cards this client received (or claimed). */
+    public function giftCards(): HasMany
+    {
+        return $this->hasMany(GiftCard::class, 'recipient_client_id');
+    }
+
+    /** Gift cards this client bought for someone. */
+    public function giftCardsSent(): HasMany
+    {
+        return $this->hasMany(GiftCard::class, 'purchaser_client_id');
+    }
+
+    /** Who referred this client (Lavish Rewards). */
+    public function referral(): HasOne
+    {
+        return $this->hasOne(Referral::class, 'referred_client_id');
+    }
+
     public function hasApp(): bool
     {
         return $this->user_id !== null;

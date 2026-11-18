@@ -8,18 +8,30 @@ use App\Enums\PaymentStatus;
 use App\Exceptions\BusinessRuleException;
 use App\Models\Appointment;
 use App\Models\Client;
+use App\Models\GiftCard;
 use App\Models\Order;
+use App\Models\Attachment;
 use App\Models\Payment;
+use App\Models\PaymentReceipt;
 use App\Models\User;
 use App\Notifications\LavishNotification;
+use App\Services\CheckoutService;
+use App\Services\GiftCardService;
+use App\Services\LoyaltyService;
 use App\Services\Notifier;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class PaymentService
 {
-    public function __construct(private ChapaGateway $chapa, private Notifier $notifier) {}
+    public function __construct(
+        private ChapaGateway $chapa,
+        private Notifier $notifier,
+        private LoyaltyService $loyalty,
+        private GiftCardService $giftCards,
+    ) {}
 
     /** The bill for an appointment or order. */
     public function createFor(Model $payable, Client $client, int $amount, string $description): Payment
@@ -35,13 +47,80 @@ class PaymentService
     }
 
     /** Reception / delivery records a payment taken at the desk or on delivery. */
-    public function recordManual(Payment $payment, PaymentMethod $method, User $by): Payment
+    public function recordManual(Payment $payment, PaymentMethod $method, User $by, ?string $reference = null, ?UploadedFile $receipt = null): Payment
     {
         if (! $payment->isOpen()) {
             throw BusinessRuleException::make('payment_not_open', 'This payment is already '.$payment->status->value.'.');
         }
+        if ($receipt || $reference) {
+            $r = PaymentReceipt::create([
+                'payment_id' => $payment->id, 'uploaded_by' => $by->id, 'source' => 'staff', 'method' => $method,
+                'reference' => $reference, 'amount' => $payment->dueAmount(), 'status' => 'accepted', 'reviewed_by' => $by->id, 'reviewed_at' => now(),
+            ]);
+            if ($receipt) {
+                Attachment::store($r, $receipt, $by->id, 'receipts/'.$payment->id);
+            }
+        }
+        // Any receipt the client sent is settled by this desk payment.
+        $payment->receipts()->where('status', 'pending')->update(['status' => 'accepted', 'reviewed_by' => $by->id, 'reviewed_at' => now()]);
 
-        return $this->markPaid($payment, $method, provider: null, reference: null, by: $by);
+        return $this->markPaid($payment, $method, provider: null, reference: $reference, by: $by);
+    }
+
+    /** The client paid outside the app and uploads the receipt. The bill waits for reception to check it. */
+    public function submitReceipt(Payment $payment, User $by, PaymentMethod $method, UploadedFile $file, ?string $reference, ?int $amount, ?string $note): PaymentReceipt
+    {
+        if (! $payment->isOpen()) {
+            throw BusinessRuleException::make('payment_not_open', 'This payment is already '.$payment->status->value.'.');
+        }
+        if ($payment->dueAmount() === 0) {
+            throw BusinessRuleException::make('nothing_to_pay', 'Nothing is left to pay on this bill.');
+        }
+        $receipt = DB::transaction(function () use ($payment, $by, $method, $file, $reference, $amount, $note) {
+            // A new upload replaces one still waiting.
+            $payment->receipts()->where('status', 'pending')->update(['status' => 'rejected', 'reject_reason' => 'Replaced by a newer receipt', 'reviewed_at' => now()]);
+            $r = PaymentReceipt::create([
+                'payment_id' => $payment->id, 'uploaded_by' => $by->id, 'source' => 'client', 'method' => $method,
+                'reference' => $reference, 'amount' => $amount ?? $payment->dueAmount(), 'note' => $note, 'status' => 'pending',
+            ]);
+            Attachment::store($r, $file, $by->id, 'receipts/'.$payment->id);
+            $payment->update(['status' => PaymentStatus::InReview, 'method' => $method]);
+
+            return $r;
+        });
+        $payment->loadMissing('client');
+        $this->notifier->staff('payments.collect', new LavishNotification('payment.receipt', 'Receipt to check',
+            "{$payment->client->name} uploaded a {$method->label()} receipt for {$payment->description} (ETB ".number_format($receipt->amount).').',
+            'receipt_long', null, '/payments'));
+
+        return $receipt->load('attachments');
+    }
+
+    /** Reception checked the receipt: the bill is paid (points, gift card activation… follow as usual). */
+    public function acceptReceipt(PaymentReceipt $receipt, User $by): Payment
+    {
+        if ($receipt->status !== 'pending') {
+            throw BusinessRuleException::make('receipt_not_pending', 'This receipt was already '.$receipt->status.'.');
+        }
+        $receipt->update(['status' => 'accepted', 'reviewed_by' => $by->id, 'reviewed_at' => now()]);
+
+        return $this->markPaid($receipt->payment, $receipt->method, null, $receipt->reference, $by);
+    }
+
+    /** The receipt doesn't match: the bill is open again and the client is told why. */
+    public function rejectReceipt(PaymentReceipt $receipt, User $by, string $reason): Payment
+    {
+        if ($receipt->status !== 'pending') {
+            throw BusinessRuleException::make('receipt_not_pending', 'This receipt was already '.$receipt->status.'.');
+        }
+        $receipt->update(['status' => 'rejected', 'reviewed_by' => $by->id, 'reviewed_at' => now(), 'reject_reason' => $reason]);
+        $payment = $receipt->payment->load('client');
+        $payment->update(['status' => PaymentStatus::Unpaid]);
+        $this->notifier->client($payment->client, new LavishNotification('payment.receipt_rejected', 'Receipt not accepted',
+            "We couldn’t confirm your receipt for {$payment->description}: {$reason}. Please check and upload it again, or pay at reception.",
+            'receipt_long', ['screen' => $payment->payable_type === 'order' ? 'order' : 'appointment', 'id' => $payment->payable_id]));
+
+        return $payment;
     }
 
     /**
@@ -52,6 +131,12 @@ class PaymentService
     {
         if (! $payment->isOpen()) {
             throw BusinessRuleException::make('payment_not_open', 'This payment is already '.$payment->status->value.'.');
+        }
+        if (! config('lavish.payments.online_enabled')) {
+            throw BusinessRuleException::make('online_payments_off', 'Online payment isn’t available yet. Pay by Telebirr, bank or at reception and upload your receipt.');
+        }
+        if ($payment->dueAmount() === 0) {
+            throw BusinessRuleException::make('nothing_to_pay', 'Nothing is left to pay on this bill.');
         }
         if (! in_array($method->value, PaymentMethod::online(), true)) {
             throw BusinessRuleException::make('method_not_online', 'Choose Telebirr, CBE Birr or card to pay in the app.');
@@ -81,7 +166,7 @@ class PaymentService
         if (! $result['paid']) {
             return $payment;
         }
-        if ($result['amount'] !== null && (int) round($result['amount']) < $payment->amount) {
+        if ($result['amount'] !== null && (int) round($result['amount']) < $payment->dueAmount()) {
             report(new \RuntimeException("Chapa amount mismatch on payment {$payment->id}: {$result['amount']}"));
 
             return $payment;
@@ -105,16 +190,27 @@ class PaymentService
         });
 
         $payment->loadMissing('client.user', 'payable');
-        $target = $payment->payable instanceof Order
-            ? ['screen' => 'order', 'id' => $payment->payable_id]
-            : ['screen' => 'appointment', 'id' => $payment->payable_id];
-        $extra = $payment->payable instanceof Appointment && $payment->payable->videoLinkVisibleToClient()
+        $payable = $payment->payable;
+        $target = match (true) {
+            $payable instanceof Order => ['screen' => 'order', 'id' => $payment->payable_id],
+            $payable instanceof GiftCard => ['screen' => 'gift_card', 'id' => $payment->payable_id],
+            default => ['screen' => 'appointment', 'id' => $payment->payable_id],
+        };
+        $extra = $payable instanceof Appointment && $payable->videoLinkVisibleToClient()
             ? ' Your video link is now available in the app.' : '';
-        $this->notifier->client($payment->client, new LavishNotification(
-            'payment.received', 'Payment received',
-            'We received ETB '.number_format($payment->amount)." for {$payment->description} ({$method->label()}).{$extra}",
-            'verified', $target,
-        ));
+        $money = $payment->dueAmount();
+        $text = $money > 0
+            ? 'We received ETB '.number_format($money)." for {$payment->description} ({$method->label()})."
+            : "{$payment->description} is fully covered by your ".($payment->gift_card_amount > 0 ? 'gift card' : 'Lavish Rewards').'.';
+        $this->notifier->client($payment->client, new LavishNotification('payment.received', 'Payment received', $text.$extra, 'verified', $target));
+
+        // Lavish Rewards & gift cards: points need the visit to be completed AND paid (whichever comes second).
+        match (true) {
+            $payable instanceof GiftCard => $this->giftCards->activate($payable, $by),
+            $payable instanceof Appointment => $this->loyalty->creditVisit($payable),
+            $payable instanceof Order => $this->loyalty->creditOrder($payable),
+            default => null,
+        };
 
         return $payment;
     }
@@ -133,6 +229,7 @@ class PaymentService
                 'currency_exchange', null, '/payments',
             ));
         } elseif ($payment->isOpen()) {
+            app(CheckoutService::class)->release($payment, $why);
             $payment->update(['status' => PaymentStatus::Cancelled, 'checkout_url' => null]);
         }
     }
@@ -142,7 +239,14 @@ class PaymentService
         if ($payment->status !== PaymentStatus::RefundDue) {
             throw BusinessRuleException::make('payment_not_refundable', 'Only payments marked “refund due” can be refunded.');
         }
-        $payment->update(['status' => PaymentStatus::Refunded, 'meta' => array_merge($payment->meta ?? [], ['refunded_by' => $by->id, 'refunded_at' => now()->toIso8601String()])]);
+        $cash = $payment->dueAmount();
+        app(CheckoutService::class)->release($payment, 'refunded', $by);
+        if (in_array($payment->payable_type, ['appointment', 'order'], true)) {
+            $this->loyalty->reverseFor($payment->payable_type, $payment->payable_id, 'refunded', $by);
+        }
+        $payment->update(['status' => PaymentStatus::Refunded, 'meta' => array_merge($payment->meta ?? [], [
+            'refunded_by' => $by->id, 'refunded_at' => now()->toIso8601String(), 'refunded_cash' => $cash,
+        ])]);
 
         return $payment;
     }

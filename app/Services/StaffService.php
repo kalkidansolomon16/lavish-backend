@@ -22,14 +22,14 @@ use Illuminate\Support\Facades\DB;
 class StaffService
 {
     /** Roles a staff member can be created with from the Staff page. "teacher" comes from academy teacher access. */
-    public const CREATABLE = ['doctor', 'gm', 'reception', 'ecommerce', 'team'];
+    public const CREATABLE = ['doctor', 'nurse', 'gm', 'reception', 'ecommerce'];
 
     public function __construct(private Messenger $messenger, private Notifier $notifier) {}
 
     /** @return list<string> role keys $actor may create */
     public function creatableRoles(User $actor): array
     {
-        if (! $actor->hasPermission('staff.add')) {
+        if (! $actor->hasPermission('staff.create')) {
             return [];
         }
 
@@ -94,7 +94,7 @@ class StaffService
     public function setStatus(User $actor, User $member, UserStatus $status): User
     {
         $this->assertBelow($actor, $member);
-        $needed = $status === UserStatus::Suspended ? 'staff.suspend' : 'staff.add';
+        $needed = $status === UserStatus::Suspended ? 'staff.suspend' : 'staff.edit';
         if (! $actor->hasPermission($needed)) {
             throw BusinessRuleException::make('forbidden', 'You don’t have permission to do that.', status: 403);
         }
@@ -125,7 +125,7 @@ class StaffService
     public function resetPassword(User $actor, User $member): string
     {
         $this->assertBelow($actor, $member);
-        if (! $actor->hasPermission('staff.add')) {
+        if (! $actor->hasPermission('staff.password')) {
             throw BusinessRuleException::make('forbidden', 'You don’t have permission to do that.', status: 403);
         }
         $password = TempPassword::make();

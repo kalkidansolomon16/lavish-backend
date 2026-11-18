@@ -4,7 +4,7 @@ namespace Tests;
 
 use App\Models\User;
 use App\Support\Phone;
-use Database\Seeders\DatabaseSeeder;
+use Database\Seeders\DemoSeeder;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Laravel\Sanctum\Sanctum;
 
@@ -13,7 +13,7 @@ abstract class TestCase extends BaseTestCase
     /** Roles & permissions + the demo data (same people as the prototypes). */
     protected function seedDemo(): void
     {
-        $this->seed(DatabaseSeeder::class);
+        $this->seed(DemoSeeder::class); // runs DatabaseSeeder first
     }
 
     /** Acts as the demo user with this phone number. */
@@ -38,7 +38,7 @@ abstract class TestCase extends BaseTestCase
 
     protected const DR_YONAS = '+251911500002';
 
-    protected const NURSE = '+251911445566';      // Lavish Team only
+    protected const NURSE = '+251911445566';      // Nurse role
 
     protected const TIGIST = '+251911223344';     // client with the app
 

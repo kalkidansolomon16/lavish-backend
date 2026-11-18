@@ -91,6 +91,36 @@ class ShopFlowTest extends TestCase
         $this->assertSame(['adjust', 'transfer', 'in'], collect($this->getJson("/api/v1/staff/products/movements?product_id={$tonic->id}")->json('data'))->take(3)->pluck('type')->all());
     }
 
+    public function test_doctor_sets_medicine_reminders_the_app_receives(): void
+    {
+        $client = User::where('phone', self::TIGIST)->first()->client;
+        $serum = Product::where('sku', 'LV-SER-001')->first();
+        $this->as(self::DR_MERON);
+        $this->postJson('/api/v1/staff/prescriptions', [
+            'client_id' => $client->id,
+            'items' => [['product_id' => $serum->id, 'quantity' => 1, 'reminder_times' => ['25:00']]],
+        ])->assertStatus(422)->assertJsonValidationErrors('items.0.reminder_times.0');
+
+        $rx = $this->postJson('/api/v1/staff/prescriptions', [
+            'client_id' => $client->id,
+            'items' => [
+                ['product_id' => $serum->id, 'quantity' => 1, 'reminder_times' => ['20:00', '08:00', '08:00'], 'duration_days' => 14],
+                ['custom_name' => 'Vitamin D 1000 IU', 'quantity' => 1],
+            ],
+        ])->assertCreated()->json('data.id');
+
+        $this->as(self::TIGIST);
+        $item = $this->getJson("/api/v1/client/prescriptions/{$rx}")->assertOk()->json('data.items.0');
+        $this->assertSame(['08:00', '20:00'], $item['reminder']['times']);
+        $this->assertSame(now()->toDateString(), $item['reminder']['starts_on']);
+        $this->assertSame(now()->addDays(13)->toDateString(), $item['reminder']['ends_on']);
+        $this->assertTrue($item['reminder']['active']);
+        $this->assertNull($this->getJson("/api/v1/client/prescriptions/{$rx}")->json('data.items.1.reminder'));
+
+        $this->travel(15)->days();
+        $this->assertFalse($this->getJson("/api/v1/client/prescriptions/{$rx}")->json('data.items.0.reminder.active'));
+    }
+
     public function test_doctor_prescribes_and_e_commerce_turns_it_into_an_order(): void
     {
         $client = User::where('phone', self::TIGIST)->first()->client;

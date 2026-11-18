@@ -111,6 +111,41 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('chats', [Client\ChatController::class, 'index']);
         Route::post('chats/{doctor}', [Client\ChatController::class, 'open']);
+
+        // Checkout with Lavish Rewards vouchers and gift cards (then Chapa for the rest)
+        Route::get('payments/{payment}/wallet', [Client\PaymentController::class, 'wallet']);
+        Route::post('payments/{payment}/quote', [Client\PaymentController::class, 'quote']);
+        Route::post('payments/{payment}/apply', [Client\PaymentController::class, 'apply']);
+        Route::post('payments/{payment}/release', [Client\PaymentController::class, 'release']);
+        Route::post('payments/{payment}/receipt', [Client\PaymentController::class, 'receipt'])->middleware('throttle:20,1');
+
+        // Lavish Rewards
+        Route::prefix('rewards')->controller(Client\RewardsController::class)->group(function () {
+            Route::get('/', 'show');
+            Route::post('join', 'join');
+            Route::post('tier-seen', 'tierSeen');
+            Route::get('ways-to-earn', 'waysToEarn');
+            Route::get('catalog', 'catalog');
+            Route::post('catalog/{reward}/redeem', 'redeem');
+            Route::get('vouchers', 'vouchers');
+            Route::get('history', 'history');
+            Route::get('requests', 'requests');
+            Route::post('requests', 'requestPoints')->middleware('throttle:20,1');
+            Route::post('requests/{pointsRequest}/cancel', 'cancelRequest');
+            Route::get('referrals', 'referrals');
+            Route::post('referrals', 'useReferral');
+            Route::get('estimate', 'estimate');
+        });
+
+        // Gift cards
+        Route::prefix('gift-cards')->controller(Client\GiftCardController::class)->group(function () {
+            Route::get('options', 'options');
+            Route::get('/', 'index');
+            Route::post('/', 'store');
+            Route::post('claim', 'claim')->middleware('throttle:giftcode');
+            Route::post('check', 'check')->middleware('throttle:giftcode');
+            Route::get('{giftCard}', 'show');
+        });
     });
 
     // ------------------------------------------------------------ mobile — student
@@ -134,8 +169,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('appointments/classes', 'classes');
                 Route::get('appointments/{appointment}', 'show');
             });
+            Route::post('appointments/walk-in', 'walkIn')->middleware('permission:appointments.create');
             Route::middleware('permission:appointments.approve')->group(function () {
-                Route::post('appointments/walk-in', 'walkIn');
                 Route::get('appointments/{appointment}/check', 'check');
                 Route::post('appointments/{appointment}/approve', 'approve');
                 Route::post('appointments/{appointment}/decline', 'decline');
@@ -144,9 +179,9 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
         Route::controller(Staff\ClientController::class)->group(function () {
-            Route::get('clients', 'index')->middleware('permission:page.clients|appointments.approve');
-            Route::get('clients/{client}', 'show')->middleware('permission:page.clients|appointments.approve');
-            Route::patch('clients/{client}', 'update')->middleware('permission:clients.history');
+            Route::get('clients', 'index')->middleware('permission:page.clients|appointments.approve|appointments.create');
+            Route::get('clients/{client}', 'show')->middleware('permission:page.clients|appointments.approve|appointments.create');
+            Route::patch('clients/{client}', 'update')->middleware('permission:clients.edit');
             Route::put('clients/{client}/history', 'updateHistory')->middleware('permission:clients.history');
             Route::post('clients/{client}/invite', 'invite')->middleware('permission:clients.invite');
         });
@@ -154,8 +189,71 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::controller(Staff\PaymentController::class)->group(function () {
             Route::get('payments', 'index')->middleware('permission:page.payments');
             Route::post('payments/{payment}/record', 'record')->middleware('permission:payments.collect');
-            Route::post('payments/{payment}/refund', 'refund')->middleware('permission:payments.collect');
+            Route::post('payments/{payment}/refund', 'refund')->middleware('permission:payments.refund');
             Route::post('payments/{payment}/verify', 'verify')->middleware('permission:payments.collect');
+            Route::middleware('permission:payments.collect')->group(function () {
+                Route::get('payments/{payment}/wallet', 'wallet');
+                Route::post('payments/{payment}/quote', 'quote');
+                Route::post('payments/{payment}/checkout', 'checkout');
+                Route::post('payments/{payment}/receipts/{receipt}/accept', 'acceptReceipt');
+                Route::post('payments/{payment}/receipts/{receipt}/reject', 'rejectReceipt');
+            });
+        });
+
+        // Lavish Rewards
+        Route::prefix('rewards')->controller(Staff\RewardsController::class)->group(function () {
+            Route::middleware('permission:page.rewards')->group(function () {
+                Route::get('settings', 'settings');
+                Route::get('members', 'members');
+                Route::get('clients/{client}', 'client');
+                Route::post('clients/{client}/join', 'join')->middleware('permission:rewards.enroll');
+                Route::post('enrol', 'enrol')->middleware('permission:rewards.enroll');
+                Route::post('clients/{client}/redeem/{reward}', 'redeem')->middleware('permission:payments.collect|rewards.manage');
+            });
+            Route::middleware('permission:rewards.manage')->group(function () {
+                Route::put('settings', 'updateSettings');
+                Route::put('tiers', 'updateTiers');
+                Route::post('rules', 'saveRule');
+                Route::patch('rules/{rule}', 'saveRule');
+                Route::post('catalog', 'saveReward');
+                Route::patch('catalog/{reward}', 'saveReward');
+                Route::post('campaigns', 'saveCampaign');
+                Route::patch('campaigns/{campaign}', 'saveCampaign');
+                Route::get('audit', 'audit');
+            });
+            Route::post('clients/{client}/adjust', 'adjust')->middleware('permission:rewards.adjust');
+            Route::get('reports', 'reports')->middleware('permission:finance.revenue');
+        });
+
+        // Members' requests to use points (reception; e-commerce for shop requests sent to them)
+        Route::prefix('rewards/requests')->controller(Staff\PointsRequestController::class)->group(function () {
+            Route::get('/', 'index')->middleware('permission:rewards.requests|orders.points');
+            Route::get('{pointsRequest}', 'show')->middleware('permission:rewards.requests|orders.points');
+            Route::post('{pointsRequest}/forward', 'forward')->middleware('permission:rewards.requests');
+            Route::post('{pointsRequest}/complete', 'complete')->middleware('permission:rewards.requests|orders.points');
+            Route::post('{pointsRequest}/reject', 'reject')->middleware('permission:rewards.requests|orders.points');
+        });
+
+        // Gift cards
+        Route::prefix('gift-cards')->controller(Staff\GiftCardController::class)->group(function () {
+            Route::get('/', 'index')->middleware('permission:page.giftcards');
+            Route::post('/', 'store')->middleware('permission:giftcards.sell|giftcards.promo');
+            Route::post('stock/generate', 'generateStock')->middleware('permission:giftcards.stock');
+            Route::post('stock/import', 'importStock')->middleware('permission:giftcards.stock');
+            Route::post('stock/sell', 'sellStock')->middleware(['permission:giftcards.sell', 'throttle:giftcode']);
+            Route::post('lookup', 'lookup')->middleware(['permission:giftcards.sell|giftcards.activate|giftcards.use|payments.collect', 'throttle:giftcode']);
+            Route::post('{giftCard}/activate', 'activate')->middleware('permission:giftcards.activate');
+            Route::post('{giftCard}/use', 'useCard')->middleware('permission:giftcards.use');
+            Route::get('{giftCard}', 'show')->middleware('permission:page.giftcards');
+            Route::post('{giftCard}/void', 'void')->middleware('permission:giftcards.void');
+        });
+
+        // Treatments clients can book (prices, length, which doctors offer them)
+        Route::controller(Staff\ServiceController::class)->group(function () {
+            Route::get('services', 'index')->middleware('permission:page.treatments');
+            Route::post('services', 'store')->middleware('permission:treatments.create');
+            Route::patch('services/{service}', 'update')->middleware('permission:treatments.edit');
+            Route::delete('services/{service}', 'destroy')->middleware('permission:treatments.delete');
         });
 
         Route::controller(Staff\ProductController::class)->group(function () {
@@ -164,14 +262,12 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('products/movements', 'movements');
                 Route::get('products/{product}', 'show');
             });
-            Route::middleware('permission:products.edit')->group(function () {
-                Route::post('products', 'store');
-                Route::patch('products/{product}', 'update');
-                Route::delete('products/{product}', 'destroy');
-                Route::post('products/{product}/image', 'uploadImage');
-                Route::post('products/{product}/receive', 'receive');
-                Route::post('products/{product}/adjust', 'adjust');
-            });
+            Route::post('products', 'store')->middleware('permission:products.create');
+            Route::patch('products/{product}', 'update')->middleware('permission:products.edit');
+            Route::delete('products/{product}', 'destroy')->middleware('permission:products.delete');
+            Route::post('products/{product}/image', 'uploadImage')->middleware('permission:products.create|products.edit');
+            Route::post('products/{product}/receive', 'receive')->middleware('permission:products.stock');
+            Route::post('products/{product}/adjust', 'adjust')->middleware('permission:products.stock');
             Route::post('products/{product}/transfer', 'transfer')->middleware('permission:products.transfer');
         });
 
@@ -180,10 +276,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('orders/{order}', 'show')->middleware('permission:page.orders');
             Route::middleware('permission:orders.deliver')->group(function () {
                 Route::post('orders/{order}/advance', 'advance');
-                Route::post('orders/{order}/cancel', 'cancel');
                 Route::post('orders/{order}/mark-paid', 'markPaid');
                 Route::post('orders/{order}/resend-email', 'resendEmail');
             });
+            Route::post('orders/{order}/cancel', 'cancel')->middleware('permission:orders.cancel');
         });
 
         Route::controller(Staff\PrescriptionController::class)->group(function () {
@@ -196,8 +292,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::controller(Staff\ComplaintController::class)->group(function () {
             Route::get('complaints', 'index')->middleware('permission:page.complaints');
             Route::get('complaints/{complaint}', 'show')->middleware('permission:page.complaints');
-            Route::post('complaints/{complaint}/reply', 'reply')->middleware('permission:complaints.manage');
-            Route::post('complaints/{complaint}/status', 'status')->middleware('permission:complaints.manage');
+            Route::post('complaints/{complaint}/reply', 'reply')->middleware('permission:complaints.reply');
+            Route::post('complaints/{complaint}/status', 'status')->middleware('permission:complaints.resolve');
         });
 
         Route::prefix('academy')->controller(Staff\AcademyController::class)->group(function () {
@@ -205,8 +301,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('courses', 'courses');
                 Route::get('enrollments', 'enrollments');
             });
+            Route::post('courses', 'storeCourse')->middleware('permission:academy.create');
             Route::middleware('permission:academy.paths')->group(function () {
-                Route::post('courses', 'storeCourse');
                 Route::patch('courses/{course}', 'updateCourse');
                 Route::put('courses/{course}/teachers', 'setTeachers');
                 Route::post('courses/{course}/modules', 'addModule');
@@ -236,10 +332,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::controller(Staff\StaffMemberController::class)->group(function () {
             Route::get('members', 'index')->middleware('permission:page.staff');
-            Route::post('members', 'store')->middleware('permission:staff.add');
-            Route::patch('members/{member}', 'update')->middleware('permission:staff.add');
-            Route::post('members/{member}/status', 'setStatus')->middleware('permission:staff.add|staff.suspend');
-            Route::post('members/{member}/reset-password', 'resetPassword')->middleware('permission:staff.add');
+            Route::post('members', 'store')->middleware('permission:staff.create');
+            Route::patch('members/{member}', 'update')->middleware('permission:staff.edit');
+            Route::post('members/{member}/status', 'setStatus')->middleware('permission:staff.edit|staff.suspend');
+            Route::post('members/{member}/reset-password', 'resetPassword')->middleware('permission:staff.password');
             Route::post('doctors/{doctor}/access', 'setDoctorAccess')->middleware('permission:doctors.grant|doctors.ban');
             Route::patch('doctors/{doctor}', 'updateDoctor'); // managers, or the doctor themself (checked inside)
         });
@@ -253,14 +349,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::controller(Staff\NewsController::class)->group(function () {
             Route::get('news', 'index')->middleware('permission:page.news');
-            Route::middleware('permission:news.publish')->group(function () {
-                Route::post('news', 'store');
-                Route::post('news/{news}', 'update'); // POST so images can be sent as multipart
-                Route::delete('news/{news}', 'destroy');
-            });
+            Route::post('news', 'store')->middleware('permission:news.create');
+            Route::post('news/{news}', 'update')->middleware('permission:news.edit'); // POST so images can be sent as multipart
+            Route::delete('news/{news}', 'destroy')->middleware('permission:news.delete');
         });
 
-        Route::prefix('team')->middleware('permission:page.team')->controller(Staff\TeamController::class)->group(function () {
+        Route::prefix('team')->controller(Staff\TeamController::class)->group(function () {
             Route::get('people', 'people');
             Route::get('announcements', 'announcements');
             Route::post('announcements', 'announce')->middleware('permission:team.announce');

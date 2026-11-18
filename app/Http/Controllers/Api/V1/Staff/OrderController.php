@@ -71,7 +71,7 @@ class OrderController extends StaffController
     /** Body: method (cash|telebirr|cbe_birr|card|bank_transfer). */
     public function markPaid(Request $request, Order $order): OrderResource
     {
-        $data = $request->validate(['method' => ['required', Rule::in(PaymentMethod::values())]]);
+        $data = $request->validate(['method' => ['required', Rule::in(PaymentMethod::desk())]]);
         $this->payments->recordManual($order->payment, PaymentMethod::from($data['method']), $request->user());
 
         return new OrderResource($order->fresh()->load(self::WITH));

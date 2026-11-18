@@ -32,25 +32,55 @@ class PermissionTest extends TestCase
         $this->putJson('/api/v1/staff/permissions/doctor/appointments.complete', ['granted' => false])->assertForbidden(); // GM lacks it
 
         $this->as(self::RECEPTION);
-        $this->putJson('/api/v1/staff/permissions/team/page.team', ['granted' => false])->assertForbidden();
+        $this->putJson('/api/v1/staff/permissions/nurse/page.clients', ['granted' => false])->assertForbidden(); // no permissions.manage
     }
 
     public function test_a_revoked_permission_takes_effect_immediately(): void
     {
         $this->as(self::RECEPTION);
-        $this->getJson('/api/v1/staff/team/people')->assertOk();
+        $this->getJson('/api/v1/staff/payments')->assertOk();
 
         $this->as(self::CEO);
-        $this->putJson('/api/v1/staff/permissions/reception/page.team', ['granted' => false])->assertOk();
+        $this->putJson('/api/v1/staff/permissions/reception/page.payments', ['granted' => false])->assertOk();
 
-        $reception = $this->as(self::RECEPTION);
-        $this->getJson('/api/v1/staff/team/people')->assertForbidden();
-        $this->assertNotContains('team', $this->getJson('/api/v1/auth/me')->json('data.pages'));
+        $this->as(self::RECEPTION);
+        $this->getJson('/api/v1/staff/payments')->assertForbidden();
+        $this->assertNotContains('payments', $this->getJson('/api/v1/auth/me')->json('data.pages'));
+        $this->assertContains('team', $this->getJson('/api/v1/auth/me')->json('data.pages')); // Lavish Team is always there
 
         $this->as(self::CEO);
         $this->postJson('/api/v1/staff/permissions/reset')->assertOk();
         $this->as(self::RECEPTION);
-        $this->getJson('/api/v1/staff/team/people')->assertOk();
+        $this->getJson('/api/v1/staff/payments')->assertOk();
+    }
+
+    public function test_view_and_change_are_separate_permissions(): void
+    {
+        // A role can see staff without being allowed to add them.
+        $this->as(self::CEO);
+        $this->putJson('/api/v1/staff/permissions/reception/page.staff', ['granted' => true])->assertOk();
+        $this->as(self::RECEPTION);
+        $this->getJson('/api/v1/staff/members')->assertOk()->assertJsonPath('meta.creatable_roles', []);
+        $this->postJson('/api/v1/staff/members', ['role' => 'nurse', 'name' => 'Test Nurse', 'phone' => '0911998877'])->assertForbidden();
+
+        // News: create without delete.
+        $this->as(self::GM);
+        $id = $this->postJson('/api/v1/staff/news', ['title' => 'Hello', 'body' => 'Open on Saturday', 'tag' => 'Update', 'published' => true])->assertCreated()->json('data.id');
+        $this->as(self::CEO);
+        $this->putJson('/api/v1/staff/permissions/gm/news.delete', ['granted' => false])->assertOk();
+        $this->as(self::GM);
+        $this->deleteJson("/api/v1/staff/news/{$id}")->assertForbidden();
+    }
+
+    public function test_nurse_role_has_clinical_support_access(): void
+    {
+        $this->as(self::NURSE);
+        $me = $this->getJson('/api/v1/auth/me')->assertOk();
+        $this->assertSame('nurse', $me->json('data.portal.key'));
+        $this->assertEqualsCanonicalizing(['dashboard', 'appointments', 'clients', 'prescriptions', 'team'], $me->json('data.pages'));
+        $this->getJson('/api/v1/staff/appointments')->assertOk();
+        $this->getJson('/api/v1/staff/payments')->assertForbidden();
+        $this->getJson('/api/v1/staff/dashboard')->assertOk()->assertJsonPath('data.portal', 'nurse');
     }
 
     public function test_staff_management_respects_the_hierarchy(): void

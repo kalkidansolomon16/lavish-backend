@@ -92,7 +92,7 @@ class ClientController extends StaffController
 
     private function query()
     {
-        return Client::query()->with('primaryDoctor.user', 'preferredBranch')
+        return Client::query()->with('primaryDoctor.user', 'preferredBranch', 'history.recorder')
             ->addSelect(['last_treatment' => Appointment::query()->join('services', 'services.id', '=', 'appointments.service_id')
                 ->whereColumn('appointments.client_id', 'clients.id')->where('appointments.status', 'completed')
                 ->latest('appointments.starts_at')->limit(1)->select('services.name')])

@@ -18,6 +18,10 @@ class PaymentResource extends JsonResource
             'id' => $this->id,
             'description' => $this->description,
             'amount' => $this->amount,
+            'discount_amount' => $this->discount_amount,   // tier price + voucher + points (earns no points)
+            'gift_card_amount' => $this->gift_card_amount,
+            'points_used' => $this->points_used,
+            'due_amount' => $this->dueAmount(),             // what is left to pay in money
             'currency' => $this->currency,
             'status' => $this->status->value,
             'method' => $this->method ? ['value' => $this->method->value, 'label' => $this->method->label()] : null,
@@ -28,6 +32,9 @@ class PaymentResource extends JsonResource
             'paid_at' => $this->paid_at?->toIso8601String(),
             'created_at' => $this->created_at->toIso8601String(),
             'payable' => $this->payable_type ? ['type' => $this->payable_type, 'id' => $this->payable_id] : null,
+            // Latest receipt (proof of payment) — `receipts` has all of them when loaded.
+            'receipt' => $this->relationLoaded('receipts') ? $this->receipts->first()?->toArray() : null,
+            'receipts' => $this->when($staff && $this->relationLoaded('receipts'), fn () => $this->receipts->map->toArray()),
             'client' => $this->when($staff && $this->relationLoaded('client'), fn () => ['id' => $this->client->id, 'name' => $this->client->name, 'phone' => $this->client->phone]),
             'recorded_by' => $this->when($staff && $this->relationLoaded('recorder'), fn () => $this->recorder?->name),
         ];

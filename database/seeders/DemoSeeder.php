@@ -66,6 +66,8 @@ class DemoSeeder extends Seeder
 
     public function run(): void
     {
+        abort_if(app()->isProduction(), 403, 'Demo data is never seeded in production.');
+        $this->call(DatabaseSeeder::class); // roles, branches, treatments, rewards defaults, CEO
         $this->password = Hash::make('password');
         $this->today = CarbonImmutable::today();
 
@@ -81,6 +83,7 @@ class DemoSeeder extends Seeder
         $this->news();
         $this->academy();
         $this->team();
+        $this->call(LoyaltyDemoSeeder::class);
     }
 
     private function at(int $days, string $time): CarbonImmutable
@@ -91,7 +94,7 @@ class DemoSeeder extends Seeder
     private function branches(): void
     {
         foreach ([['Addis Ababa', 'Bole Road, Addis Ababa', true], ['Adama', 'Main Street, Adama', false], ['Dire Dawa', 'Kezira, Dire Dawa', false]] as $i => [$name, $address, $main]) {
-            $this->branch[$name] = Branch::create(['name' => $name, 'address' => $address, 'is_main' => $main, 'sort' => $i]);
+            $this->branch[$name] = Branch::query()->where('name', $name)->first() ?? Branch::create(['name' => $name, 'address' => $address, 'is_main' => $main, 'sort' => $i]);
         }
     }
 
@@ -108,9 +111,9 @@ class DemoSeeder extends Seeder
             ['Body Contouring & Skin Tightening', 20000, 120, 'accessibility_new'],
         ];
         foreach ($list as $i => [$name, $price, $mins, $icon]) {
-            $this->service[$name] = Service::create(['name' => $name, 'slug' => Str::slug($name), 'price' => $price, 'duration_minutes' => $mins, 'icon' => $icon, 'is_online' => false, 'sort' => $i]);
+            $this->service[$name] = Service::query()->where('name', $name)->first() ?? Service::create(['name' => $name, 'slug' => Str::slug($name), 'price' => $price, 'duration_minutes' => $mins, 'icon' => $icon, 'is_online' => false, 'sort' => $i]);
         }
-        $this->service['Online Consultation'] = Service::create([
+        $this->service['Online Consultation'] = Service::query()->where('name', 'Online Consultation')->first() ?? Service::create([
             'name' => 'Online Consultation', 'slug' => 'online-consultation', 'price' => 4000, 'duration_minutes' => 45,
             'icon' => 'video_call', 'is_online' => true, 'sort' => 99,
             'description' => 'A 45-minute video call with a Lavish doctor. Reception confirms the time; the video link appears in the app once paid.',
@@ -135,11 +138,16 @@ class DemoSeeder extends Seeder
             ['reception', 'Tsion Alemayehu', '+251911005566', 'Front Desk', 'Adama', null],
             ['reception', 'Mekdes Tolera', '+251251117788', 'Front Desk', 'Dire Dawa', null],
             ['ecommerce', 'Abel Girma', '+251911112233', 'E-commerce & Inventory', 'Addis Ababa', 'shop@lavish.et'],
-            ['team', 'Selam Getahun', '+251911445566', 'Nurse', 'Addis Ababa', null],
-            ['team', 'Ruth Alemayehu', '+251911778899', 'Skin Therapist', 'Addis Ababa', null],
-            ['team', 'Yared Bekele', '+251922334455', 'Delivery & Logistics', 'Addis Ababa', null],
+            ['nurse', 'Selam Getahun', '+251911445566', 'Nurse', 'Addis Ababa', null],
+            ['nurse', 'Ruth Alemayehu', '+251911778899', 'Skin Therapist', 'Addis Ababa', null],
+            ['ecommerce', 'Yared Bekele', '+251922334455', 'Delivery & Logistics', 'Addis Ababa', null],
         ];
         foreach ($staff as [$role, $name, $phone, $position, $branch, $email]) {
+            $existing = User::query()->where('phone', $phone)->first();
+            if ($existing) {
+                $this->staff[$name] = $existing;
+                continue;
+            }
             $u = $this->user($name, $phone, UserType::Staff, ['email' => $email]);
             if ($name === 'Mekdes Tolera') {
                 $u->update(['status' => UserStatus::Suspended]);
@@ -431,12 +439,12 @@ class DemoSeeder extends Seeder
         $made = [];
         foreach ($courses as $key => [$title, $weeks, $price, $level, $starts, $hue, $req, $teachers, $about, $mode, $modules]) {
             $c = Course::create([
-                'title' => $title, 'slug' => Str::slug($title), 'weeks' => $weeks, 'price' => $price, 'level' => $level,
+                'title' => $title, 'slug' => Str::slug($title), 'weeks' => config('lavish.course_weeks'), 'price' => $price, 'level' => $level,
                 'starts_on' => $this->today->addDays($starts), 'hue' => $hue, 'requirement' => $req, 'about' => $about, 'mode' => $mode,
                 'branch_id' => str_contains($mode, 'Adama') ? $this->branch['Adama']->id : $this->branch['Addis Ababa']->id,
             ]);
             $c->teachers()->sync(collect($teachers)->pluck('id'));
-            foreach ($modules as $i => [$mTitle, $video, $mins, $exercise, $due, $published]) {
+            foreach (array_slice($modules, 0, config('lavish.course_weeks')) as $i => [$mTitle, $video, $mins, $exercise, $due, $published]) {
                 $c->modules()->create([
                     'week' => $i + 1, 'title' => $mTitle, 'video_title' => $video, 'video_minutes' => $mins,
                     'video_url' => $video ? 'https://videos.lavish.et/demo/'.Str::slug($video) : null,

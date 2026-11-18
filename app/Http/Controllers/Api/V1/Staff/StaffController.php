@@ -15,18 +15,18 @@ abstract class StaffController extends Controller
     }
 
     /**
-     * Null when the user may see every client/appointment (reception, managers);
-     * otherwise the doctor id their view is limited to. Aborts if they are neither.
+     * Null when the user may see every client/appointment (reception, managers, nurses);
+     * otherwise the doctor id a doctor's view is limited to.
      */
     protected function doctorScope(User $user): ?int
     {
-        if ($user->hasPermission('appointments.approve', 'clients.history')) {
+        // Reception and managers see everyone; a doctor sees their own patients; other clinical staff
+        // (nurses) see everyone, since the route already checked they may open the page.
+        if ($user->hasPermission('appointments.approve', 'appointments.create', 'clients.history')) {
             return null;
         }
-        $doctorId = $user->doctor?->id;
-        abort_unless($doctorId, 403, 'You don’t have permission to do that.');
 
-        return $doctorId;
+        return $user->doctor?->id;
     }
 
     protected function myDoctor(Request $request): Doctor

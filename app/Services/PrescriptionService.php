@@ -17,7 +17,7 @@ class PrescriptionService
     public function __construct(private Notifier $notifier, private ChatService $chat) {}
 
     /**
-     * @param  list<array{product_id?: ?int, custom_name?: ?string, quantity: int, instructions?: ?string}>  $items
+     * @param  list<array{product_id?: ?int, custom_name?: ?string, quantity: int, instructions?: ?string, reminder_times?: ?list<string>, starts_on?: ?string, duration_days?: ?int}>  $items
      */
     public function create(Doctor $doctor, Client $client, ?string $note, array $items): Prescription
     {
@@ -36,6 +36,9 @@ class PrescriptionService
                     'custom_name' => $product ? null : $i['custom_name'],
                     'quantity' => $i['quantity'],
                     'instructions' => $i['instructions'] ?? null,
+                    'reminder_times' => ! empty($i['reminder_times']) ? collect($i['reminder_times'])->unique()->sort()->values()->all() : null,
+                    'starts_on' => ! empty($i['reminder_times']) ? ($i['starts_on'] ?? now()->toDateString()) : null,
+                    'duration_days' => ! empty($i['reminder_times']) ? ($i['duration_days'] ?? null) : null,
                     'was_out_of_stock' => $product ? $product->available() <= 0 : false,
                 ]);
             }

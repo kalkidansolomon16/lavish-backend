@@ -55,7 +55,7 @@ class ComplaintController extends ClientController
             return $c;
         });
 
-        $this->notifier->staff('complaints.manage', new LavishNotification('complaint.new', 'New complaint',
+        $this->notifier->staff('complaints.reply', new LavishNotification('complaint.new', 'New complaint',
             "{$client->name}: {$complaint->subject}".($complaint->priority === ComplaintPriority::High ? ' (urgent)' : ''), 'support_agent', null, '/complaints?focus='.$complaint->id));
 
         return new ComplaintResource($complaint->load(self::WITH));
@@ -77,7 +77,7 @@ class ComplaintController extends ClientController
         if ($complaint->status === ComplaintStatus::Resolved) {
             $complaint->update(['status' => ComplaintStatus::InReview, 'resolved_at' => null]);
         }
-        $this->notifier->staff('complaints.manage', new LavishNotification('complaint.message', 'Complaint reply',
+        $this->notifier->staff('complaints.reply', new LavishNotification('complaint.message', 'Complaint reply',
             "{$complaint->client->name} replied on “{$complaint->subject}”.", 'support_agent', null, '/complaints?focus='.$complaint->id));
 
         return new ComplaintResource($complaint->load(self::WITH));

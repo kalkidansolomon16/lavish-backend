@@ -71,7 +71,8 @@ class AcademyTest extends TestCase
         $this->as(self::EDEN);
         $sub = $this->postJson("/api/v1/student/modules/{$week5->id}/submission", ['body' => 'My 500-word case study…'])
             ->assertCreated()->assertJsonPath('data.status', 'submitted')->json('data.id');
-        $unpublished = $enrollment->course->modules()->where('published', false)->first();
+        $unpublished = $enrollment->course->modules()->where('id', '!=', $week5->id)->orderByDesc('week')->first();
+        $unpublished->update(['published' => false]);
         $this->getJson("/api/v1/student/modules/{$unpublished->id}")->assertNotFound();
 
         $this->as(self::DR_MERON);

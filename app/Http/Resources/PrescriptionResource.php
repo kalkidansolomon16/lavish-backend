@@ -30,6 +30,7 @@ class PrescriptionResource extends JsonResource
                     'is_custom' => $i->isCustom(),
                     'quantity' => $i->quantity,
                     'instructions' => $i->instructions,
+                    'reminder' => $i->reminder(),             // {times, starts_on, ends_on, duration_days, active} or null
                     'was_out_of_stock' => $i->was_out_of_stock,
                     'suggested_at' => $i->suggested_at?->toIso8601String(),
                     // a doctor may re-suggest it now

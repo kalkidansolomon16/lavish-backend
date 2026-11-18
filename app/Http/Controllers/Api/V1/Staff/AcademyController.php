@@ -68,7 +68,7 @@ class AcademyController extends StaffController
     /** Path owners can rename / re-order modules (teachers edit the content). */
     public function updateModule(Request $request, CourseModule $module): CourseModuleResource
     {
-        $module->update($request->validate(['title' => ['sometimes', 'string', 'max:160'], 'week' => ['sometimes', 'integer', 'min:1', 'max:52']]));
+        $module->update($request->validate(['title' => ['sometimes', 'string', 'max:160'], 'week' => ['sometimes', 'integer', 'min:1', 'max:'.config('lavish.course_weeks')]]));
 
         return new CourseModuleResource($module);
     }
@@ -150,7 +150,6 @@ class AcademyController extends StaffController
             'title' => [$req, 'string', 'max:160'],
             'about' => ['nullable', 'string', 'max:4000'],
             'level' => [$req, Rule::in(['Beginner', 'Intermediate', 'Advanced'])],
-            'weeks' => [$req, 'integer', 'min:1', 'max:104'],
             'price' => [$req, 'integer', 'min:0'],
             'mode' => ['nullable', 'string', 'max:120'],
             'branch_id' => ['nullable', 'exists:branches,id'],

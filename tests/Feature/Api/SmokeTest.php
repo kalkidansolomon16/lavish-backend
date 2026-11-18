@@ -89,7 +89,7 @@ class SmokeTest extends TestCase
     {
         $pages = [
             'page.appointments' => ['/api/v1/staff/appointments', '/api/v1/staff/appointments/classes?from='.now()->toDateString().'&to='.now()->addDays(7)->toDateString()],
-            'page.clients|appointments.approve' => ['/api/v1/staff/clients'],
+            'page.clients|appointments.approve|appointments.create' => ['/api/v1/staff/clients'],
             'page.payments' => ['/api/v1/staff/payments'],
             'page.products|page.orders|page.prescriptions' => ['/api/v1/staff/products', '/api/v1/staff/products/movements'],
             'page.orders' => ['/api/v1/staff/orders'],
@@ -99,7 +99,6 @@ class SmokeTest extends TestCase
             'page.staff' => ['/api/v1/staff/members'],
             'page.news' => ['/api/v1/staff/news'],
             'page.permissions' => ['/api/v1/staff/permissions'],
-            'page.team' => ['/api/v1/staff/team/people', '/api/v1/staff/team/announcements', '/api/v1/staff/team/groups'],
             'academy.teach' => ['/api/v1/staff/teaching/courses', '/api/v1/staff/teaching/sessions', '/api/v1/staff/teaching/students', '/api/v1/staff/teaching/submissions'],
         ];
 
@@ -108,6 +107,11 @@ class SmokeTest extends TestCase
             $this->getJson('/api/v1/staff/dashboard')->assertOk();
             $this->getJson('/api/v1/staff/search?q=ti')->assertOk();
             $this->getJson('/api/v1/auth/me')->assertOk()->assertJsonPath('data.type', 'staff');
+            // Lavish Team is open to every staff member.
+            $this->assertContains('team', $this->getJson('/api/v1/auth/me')->json('data.pages'));
+            foreach (['/api/v1/staff/team/people', '/api/v1/staff/team/announcements', '/api/v1/staff/team/groups'] as $url) {
+                $this->getJson($url)->assertOk();
+            }
             foreach ($pages as $permission => $urls) {
                 foreach ($urls as $url) {
                     $this->getJson($url)->assertStatus($user->hasPermission(...explode('|', $permission)) ? 200 : 403);

@@ -44,7 +44,7 @@ class ChapaGateway
 
         $response = Http::withToken($this->config['secret_key'])->acceptJson()->timeout(20)
             ->post($this->url('/transaction/initialize'), array_filter([
-                'amount' => (string) $payment->amount,
+                'amount' => (string) $payment->dueAmount(),
                 'currency' => $payment->currency,
                 'email' => $client->email,
                 'first_name' => $first,
@@ -71,7 +71,7 @@ class ChapaGateway
     public function verify(Payment $payment): array
     {
         if ($this->isFake()) {
-            return ['paid' => (bool) ($payment->meta['fake_paid'] ?? false), 'amount' => (float) $payment->amount, 'currency' => $payment->currency, 'reference' => 'FAKE-'.$payment->tx_ref, 'method' => null];
+            return ['paid' => (bool) ($payment->meta['fake_paid'] ?? false), 'amount' => (float) $payment->dueAmount(), 'currency' => $payment->currency, 'reference' => 'FAKE-'.$payment->tx_ref, 'method' => null];
         }
 
         $response = Http::withToken($this->config['secret_key'])->acceptJson()->timeout(20)

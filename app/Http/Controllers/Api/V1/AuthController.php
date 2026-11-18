@@ -11,6 +11,7 @@ use App\Http\Resources\UserResource;
 use App\Models\Client;
 use App\Models\DeviceToken;
 use App\Models\User;
+use App\Services\LoyaltyService;
 use App\Services\OtpService;
 use App\Support\Phone;
 use Illuminate\Http\JsonResponse;
@@ -31,7 +32,7 @@ use Illuminate\Validation\Rules\Password;
  */
 class AuthController extends Controller
 {
-    public function __construct(private OtpService $otp) {}
+    public function __construct(private OtpService $otp, private LoyaltyService $loyalty) {}
 
     public function login(Request $request): JsonResponse
     {
@@ -84,6 +85,7 @@ class AuthController extends Controller
             'gender' => ['nullable', Rule::in(['Female', 'Male'])],
             'date_of_birth' => ['nullable', 'date', 'before:today'],
             'preferred_branch_id' => ['nullable', 'exists:branches,id'],
+            'referral_code' => ['nullable', 'string', 'max:16'],
         ], ['phone.regex' => 'Enter a valid phone number, e.g. 0911 22 33 44.']);
 
         $existing = User::query()->where('phone', $data['phone'])->first();
@@ -116,6 +118,11 @@ class AuthController extends Controller
                 'preferred_branch_id' => $data['preferred_branch_id'] ?? $client->preferred_branch_id,
                 'deleted_at' => null,
             ])->save();
+
+            // Lavish Rewards referral: the friend who invited them earns points after this client's first visit.
+            if (! empty($data['referral_code']) && ! $client->referral()->exists()) {
+                $this->loyalty->applyReferralCode($client, $data['referral_code']);
+            }
         });
 
         $this->otp->send($data['phone'], OtpPurpose::Register);
@@ -141,6 +148,7 @@ class AuthController extends Controller
 
         $this->otp->verify($phone, OtpPurpose::Register, $data['code']);
         $user->update(['status' => UserStatus::Active, 'phone_verified_at' => now()]);
+        // Lavish Rewards is not joined by signing up: reception enrols the clients who want it.
 
         return $this->issueToken($user, 'mobile', $data['device_name'] ?? null, 201);
     }

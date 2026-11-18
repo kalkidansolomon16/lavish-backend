@@ -34,7 +34,6 @@ class UserResource extends JsonResource
         if ($this->isStaff()) {
             $this->loadMissing('roles', 'staffProfile.branch', 'doctor');
             $permissions = $this->permissionKeys();
-            $teamOnly = $this->roles->isNotEmpty() && $this->roles->every('team_only', true);
             $primary = $this->roles->sortBy('level')->first();
 
             return $base + [
@@ -43,7 +42,7 @@ class UserResource extends JsonResource
                 'level' => $this->level(),
                 'permissions' => $permissions,
                 'pages' => collect(config('permissions.pages'))
-                    ->filter(fn ($p) => $p === 'dashboard' ? ! $teamOnly : in_array("page.{$p}", $permissions, true))
+                    ->filter(fn ($p) => in_array($p, ['dashboard', 'team'], true) || in_array("page.{$p}", $permissions, true))
                     ->values(),
                 'position' => $this->staffProfile?->position,
                 'branch' => $this->staffProfile?->branch ? new BranchResource($this->staffProfile->branch) : null,

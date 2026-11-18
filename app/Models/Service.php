@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /** A treatment clients can book (or the online consultation, is_online = true). */
 class Service extends Model
@@ -19,6 +20,11 @@ class Service extends Model
     public function doctors(): BelongsToMany
     {
         return $this->belongsToMany(Doctor::class);
+    }
+
+    public function appointments(): HasMany
+    {
+        return $this->hasMany(Appointment::class);
     }
 
     public function scopeActive(Builder $q): Builder

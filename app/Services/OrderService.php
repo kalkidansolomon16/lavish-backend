@@ -30,6 +30,7 @@ class OrderService
         private PaymentService $payments,
         private Messenger $messenger,
         private Notifier $notifier,
+        private LoyaltyService $loyalty,
     ) {}
 
     /**
@@ -152,6 +153,9 @@ class OrderService
         });
 
         $this->stamp($order, $next, $by);
+        if ($next === OrderStatus::Delivered) {
+            $this->loyalty->creditOrder($order->refresh());
+        }
 
         return $low;
     }

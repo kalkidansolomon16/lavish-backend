@@ -39,6 +39,7 @@ class AppointmentService
         private ChatService $chat,
         private Notifier $notifier,
         private Messenger $messenger,
+        private LoyaltyService $loyalty,
     ) {}
 
     /**
@@ -225,6 +226,9 @@ class AppointmentService
             'appointment.completed', 'Thank you for visiting Lavish',
             "Your {$appt->service->name} is complete. You can now chat with {$appt->doctor->name} about your results and aftercare.",
             'forum', ['screen' => 'chat', 'id' => $appt->doctor_id]));
+
+        // Lavish Rewards: credited now if the visit is already paid, otherwise when the payment comes in.
+        $this->loyalty->creditVisit($appt);
 
         return $appt;
     }
