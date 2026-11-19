@@ -200,7 +200,9 @@ class RewardsController extends StaffController
             ->leftJoin('client_loyalty', 'client_loyalty.client_id', '=', 'clients.id')
             ->with('loyalty.tier:id,name,key')
             // Members only (enrolled). ?all=1 or a search also finds clients who aren't enrolled yet.
-            ->when(! $search && ! $request->boolean('all'), fn ($q) => $q->whereNotNull('client_loyalty.joined_at'))
+            // ?requests=1: clients who asked to join in the app and are waiting for reception.
+            ->when($request->boolean('requests'), fn ($q) => $q->whereNull('client_loyalty.joined_at')->whereNotNull('client_loyalty.requested_at'))
+            ->when(! $search && ! $request->boolean('all') && ! $request->boolean('requests'), fn ($q) => $q->whereNotNull('client_loyalty.joined_at'))
             ->when($request->integer('tier_id'), fn ($q, $t) => $q->where('client_loyalty.tier_id', $t))
             ->when($search, fn ($q, $t) => $q->where(fn ($w) => $w->where('clients.name', 'like', "%{$t}%")
                 ->orWhere('clients.phone', 'like', '%'.(ltrim(preg_replace('/\D/', '', $t), '0') ?: '#').'%')))
@@ -216,9 +218,21 @@ class RewardsController extends StaffController
                 'lifetime_points' => (int) $c->loyalty?->lifetime_points,
                 'member' => (bool) $c->loyalty?->joined_at,
                 'joined_at' => $c->loyalty?->joined_at?->toIso8601String(),
+                'requested_at' => $c->loyalty?->requested_at?->toIso8601String(),
+                'request_note' => $c->loyalty?->request_note,
             ]),
-            'meta' => ['total' => $page->total(), 'current_page' => $page->currentPage(), 'last_page' => $page->lastPage()],
+            'meta' => ['total' => $page->total(), 'current_page' => $page->currentPage(), 'last_page' => $page->lastPage(),
+                'join_requests' => ClientLoyalty::query()->whereNull('joined_at')->whereNotNull('requested_at')->count()],
         ]);
+    }
+
+    /** Decline a request to join made in the app (the client sees the reason). */
+    public function declineRequest(Request $request, Client $client, CheckoutService $checkout): JsonResponse
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'min:3', 'max:255']]);
+        $this->loyalty->declineMembership($client, $request->user(), $data['reason']);
+
+        return $this->client($request, $client, $checkout);
     }
 
     /** Client loyalty profile for the front desk: tier, balance, vouchers, gift cards, history. */
@@ -228,6 +242,8 @@ class RewardsController extends StaffController
             'client' => ['id' => $client->id, 'name' => $client->name, 'phone' => $client->phone],
             'rewards' => $this->loyalty->dashboard($client),
             'enrolled_by' => $client->loyalty?->enroller?->name,
+            'join_request' => $client->loyalty?->requested_at && ! $client->loyalty?->joined_at
+                ? ['at' => $client->loyalty->requested_at->toIso8601String(), 'note' => $client->loyalty->request_note] : null,
             'requests' => \App\Http\Resources\PointsRequestResource::collection($client->pointsRequests()->with('payment', 'handler')->latest('id')->limit(20)->get()),
             'wallet' => $checkout->wallet($client),
             'vouchers' => VoucherResource::collection($client->vouchers()->with('reward.service')->latest()->limit(30)->get()),

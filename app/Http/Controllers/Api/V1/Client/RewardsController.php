@@ -33,10 +33,14 @@ class RewardsController extends ClientController
         return response()->json(['data' => $this->loyalty->dashboard($this->client($request))]);
     }
 
-    /** Clients can't join from the app: Lavish Rewards is by enrolment at the front desk. */
+    /** Ask to join Lavish Rewards. Reception enrols the client (or declines); body: { note? }. */
     public function join(Request $request): JsonResponse
     {
-        throw BusinessRuleException::make('enrol_at_reception', 'To join Lavish Rewards, ask at the Lavish front desk. Reception will enrol you.');
+        $data = $request->validate(['note' => ['nullable', 'string', 'max:255']]);
+        $client = $this->client($request);
+        $this->loyalty->requestMembership($client, $data['note'] ?? null);
+
+        return response()->json(['data' => $this->loyalty->dashboard($client), 'message' => 'Request sent. Lavish will enrol you and let you know.'], 201);
     }
 
     /** My requests to use points, newest first. */

@@ -107,10 +107,10 @@ class AppointmentController extends StaffController
     /** Body: doctor_id (optional — required if the booking has no doctor yet). 422 doctor_busy with details.clashes. */
     public function approve(Request $request, Appointment $appointment): AppointmentResource
     {
-        $data = $request->validate(['doctor_id' => ['nullable', 'exists:doctors,id']]);
+        $data = $request->validate(['doctor_id' => ['nullable', 'exists:doctors,id'], 'allow_unpaid' => ['sometimes', 'boolean']]);
         $doctor = isset($data['doctor_id']) ? Doctor::with('user')->find($data['doctor_id']) : null;
 
-        return new AppointmentResource($this->appointments->approve($appointment, $request->user(), $doctor)->load(self::WITH));
+        return new AppointmentResource($this->appointments->approve($appointment, $request->user(), $doctor, (bool) ($data['allow_unpaid'] ?? false))->load(self::WITH));
     }
 
     /**
@@ -176,6 +176,7 @@ class AppointmentController extends StaffController
             'price' => ['nullable', 'integer', 'min:0'],
             'send_sms' => ['boolean'],
             'send_app_invite' => ['boolean'],
+            'allow_unpaid' => ['sometimes', 'boolean'],
         ]);
         if (isset($data['client']['phone']) && ! Phone::normalize($data['client']['phone'])) {
             return response()->json(['message' => 'Enter a valid phone number.', 'errors' => ['client.phone' => ['Enter a valid phone number.']]], 422);

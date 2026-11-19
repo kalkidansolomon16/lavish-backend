@@ -45,8 +45,18 @@ class ShopFlowTest extends TestCase
         $this->postJson("/api/v1/staff/orders/{$id}/advance", ['courier' => ['name' => 'Yared Bekele', 'phone' => '+251922334455']])
             ->assertOk()->assertJsonPath('data.status', 'out');
 
+        // Delivered only after the client confirms they received it in the app.
+        $this->postJson("/api/v1/staff/orders/{$id}/advance")->assertStatus(422)->assertJsonPath('code', 'awaiting_client_confirmation');
+        $this->as(self::TIGIST);
+        $this->getJson("/api/v1/client/orders/{$id}")->assertJsonPath('data.can_confirm_received', true);
+        $this->postJson("/api/v1/client/orders/{$id}/received")->assertOk()->assertJsonPath('data.can_confirm_received', false);
+        $this->assertTrue(User::where('phone', self::ECOMMERCE)->first()->notifications()->get()->contains(fn ($n) => $n->data['type'] === 'order.received'));
+        $this->as(self::ECOMMERCE);
+
         $before = Product::query()->withStock()->find($spf->id)->stockTotal();
-        $res = $this->postJson("/api/v1/staff/orders/{$id}/advance")->assertOk()->assertJsonPath('data.status', 'delivered');
+        // Pay on delivery: staff must say whether the courier collected the money.
+        $this->postJson("/api/v1/staff/orders/{$id}/advance")->assertStatus(422)->assertJsonPath('code', 'collection_required');
+        $res = $this->postJson("/api/v1/staff/orders/{$id}/advance", ['collected' => true, 'method' => 'cash'])->assertOk()->assertJsonPath('data.status', 'delivered')->assertJsonPath('data.received_at', fn ($v) => $v !== null);
         $this->assertSame($before - 2, Product::query()->withStock()->find($spf->id)->stockTotal());
         $this->assertNotEmpty($res->json('meta.low_stock'));                                  // SPF is under its reorder level
         $this->assertSame('paid', Order::find($id)->payment->status->value);                  // pay on delivery collected
@@ -55,6 +65,25 @@ class ShopFlowTest extends TestCase
         $this->as(self::TIGIST);
         $timeline = collect($this->getJson("/api/v1/client/orders/{$id}")->json('data.timeline'));
         $this->assertTrue($timeline->every(fn ($s) => $s['at'] !== null));
+    }
+
+    public function test_pay_on_delivery_not_collected_stays_unpaid_and_is_listed(): void
+    {
+        $spf = Product::where('sku', 'LV-SER-001')->first();
+        $this->as(self::TIGIST);
+        $id = $this->postJson('/api/v1/client/orders', ['items' => [['product_id' => $spf->id, 'quantity' => 1]], 'delivery_address' => 'Bole', 'payment_method' => 'pay_on_delivery'])->assertCreated()->json('data.id');
+        $this->as(self::ECOMMERCE);
+        foreach (['confirmed', 'preparing', 'ready'] as $step) {
+            $this->postJson("/api/v1/staff/orders/{$id}/advance")->assertOk();
+        }
+        $this->postJson("/api/v1/staff/orders/{$id}/advance", ['courier' => ['name' => 'Yared']])->assertOk();
+        $this->postJson("/api/v1/staff/orders/{$id}/advance", ['override_reason' => 'Client confirmed by phone', 'collected' => false])->assertOk()->assertJsonPath('data.status', 'delivered');
+
+        $this->assertSame('unpaid', Order::find($id)->payment->status->value);
+        $this->as(self::RECEPTION);
+        $owing = collect($this->getJson('/api/v1/staff/payments/owing')->assertOk()->json('data'));
+        $this->assertTrue($owing->contains(fn ($r) => $r['kind'] === 'order' && $r['payment']['id'] === Order::find($id)->payment->id));
+        $this->assertTrue(User::where('phone', self::TIGIST)->first()->notifications()->get()->contains(fn ($n) => $n->data['type'] === 'payment.due_now'));
     }
 
     public function test_cancelled_paid_order_is_flagged_for_refund(): void

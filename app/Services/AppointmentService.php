@@ -50,6 +50,9 @@ class AppointmentService
     public function book(Client $client, array $data): Appointment
     {
         $service = Service::query()->active()->findOrFail($data['service_id']);
+        if (($owed = $client->owedForTreatments()) > 0) {
+            throw BusinessRuleException::make('unpaid_treatment', 'Please pay ETB '.number_format($owed).' for your last treatment first (Profile → Payments, or at reception). Then you can book again.', ['owed' => $owed]);
+        }
         $doctor = isset($data['doctor_id']) ? Doctor::query()->bookable()->with('services:id', 'user.staffProfile')->find($data['doctor_id']) : null;
         if (isset($data['doctor_id']) && ! $doctor) {
             throw BusinessRuleException::make('doctor_unavailable', 'This doctor is not taking bookings.');
@@ -113,11 +116,12 @@ class AppointmentService
      * Reception approves a pending appointment, optionally assigning (or changing) the doctor.
      * Refuses when the doctor is busy (treatment or academy class) — reception picks another doctor or declines.
      */
-    public function approve(Appointment $appt, User $by, ?Doctor $assign = null): Appointment
+    public function approve(Appointment $appt, User $by, ?Doctor $assign = null, bool $allowUnpaid = false): Appointment
     {
         if ($appt->status !== AppointmentStatus::Pending) {
             throw BusinessRuleException::make('not_pending', 'Only pending appointments can be approved.');
         }
+        $this->assertNothingOwed($appt->client, $by, $allowUnpaid);
         $doctor = $assign ?? $appt->doctor;
         if (! $doctor) {
             throw BusinessRuleException::make('doctor_required', 'Assign a doctor before approving.');
@@ -294,6 +298,22 @@ class AppointmentService
         return $appt->refresh();
     }
 
+    /**
+     * A client who owes for a finished treatment can't get a new booking confirmed until they pay — unless a person
+     * who collects payments overrides it (e.g. they are paying now at the desk).
+     */
+    public function assertNothingOwed(Client $client, User $by, bool $allowUnpaid): void
+    {
+        $owed = $client->owedForTreatments();
+        if ($owed <= 0) {
+            return;
+        }
+        if ($allowUnpaid && $by->hasPermission('payments.collect')) {
+            return;
+        }
+        throw BusinessRuleException::make('client_owes', "{$client->name} still owes ETB ".number_format($owed).' for a finished treatment. Collect it first.', ['owed' => $owed, 'can_override' => $by->hasPermission('payments.collect')]);
+    }
+
     /** The doctor marks the treatment done. Unlocks chat with the client. */
     public function complete(Appointment $appt, User $by): Appointment
     {
@@ -320,6 +340,16 @@ class AppointmentService
         // Lavish Rewards: credited now if the visit is already paid, otherwise when the payment comes in.
         $this->loyalty->creditVisit($appt);
 
+        // Not paid yet: make sure the client doesn't leave without paying.
+        $payment = $appt->payment()->first();
+        if ($payment && in_array($payment->status->value, ['unpaid', 'pending', 'failed'], true) && $payment->dueAmount() > 0) {
+            $due = 'ETB '.number_format($payment->dueAmount());
+            $this->notifier->staff('payments.collect', new LavishNotification('payment.collect_now', 'Collect payment before the client leaves',
+                "{$client->name} finished {$appt->service->name} with {$appt->doctor->name} and still owes {$due}.", 'point_of_sale', null, '/payments?tab=owing'));
+            $this->notifier->client($client, new LavishNotification('payment.due_now', 'Please pay before you leave',
+                "Your {$appt->service->name} is done. Please pay {$due} at reception, or upload your receipt in the app.", 'payments', ['screen' => 'payment', 'id' => $payment->id]));
+        }
+
         return $appt;
     }
 
@@ -338,6 +368,10 @@ class AppointmentService
         $clashes = $this->schedule->clashes($doctor, $start, $end);
         if ($clashes) {
             throw BusinessRuleException::make('doctor_busy', "{$doctor->name} is busy at that time.", ['clashes' => $clashes]);
+        }
+
+        if (! empty($data['client_id'])) {
+            $this->assertNothingOwed(Client::findOrFail($data['client_id']), $by, (bool) ($data['allow_unpaid'] ?? false));
         }
 
         $result = DB::transaction(function () use ($data, $by, $service, $doctor, $start, $end) {

@@ -87,7 +87,7 @@ class LoyaltyService
         if ($m->joined_at) {
             return $m;
         }
-        $m->update(['joined_at' => now(), 'enrolled_by' => $by?->id, 'enrol_note' => $note]);
+        $m->update(['joined_at' => now(), 'enrolled_by' => $by?->id, 'enrol_note' => $note, 'requested_at' => null, 'declined_reason' => null, 'declined_at' => null]);
         $rule = EarnRule::general('signup');
         $welcome = $rule && $rule->points > 0 ? $rule->points : 0;
         if ($welcome) {
@@ -99,6 +99,38 @@ class LoyaltyService
         $this->notifier->client($client, new LavishNotification('rewards.enrolled', 'Welcome to Lavish Rewards',
             'You now collect points on your Lavish treatments and shop orders'.($welcome ? " — we added {$welcome} welcome points" : '').
             '. See your points and use them in the Rewards tab.', 'stars', ['screen' => 'rewards']));
+
+        return $m->refresh();
+    }
+
+    /** The client asks to join from the app; reception enrols them (or declines with a reason). */
+    public function requestMembership(Client $client, ?string $note = null): ClientLoyalty
+    {
+        $m = $this->membership($client);
+        if ($m->joined_at) {
+            throw BusinessRuleException::make('already_member', 'You are already a Lavish Rewards member.');
+        }
+        if ($m->requested_at) {
+            return $m;
+        }
+        $m->update(['requested_at' => now(), 'request_note' => $note, 'declined_reason' => null, 'declined_at' => null]);
+        $this->notifier->staff('rewards.enroll', new LavishNotification('rewards.join_requested', 'Wants to join Lavish Rewards',
+            "{$client->name} asked to join Lavish Rewards from the app".($note ? ": “{$note}”" : '.'), 'stars', null, '/rewards?tab=clients'));
+
+        return $m->refresh();
+    }
+
+    /** Reception declines a membership request; the client sees the reason and may ask again later. */
+    public function declineMembership(Client $client, User $by, string $reason): ClientLoyalty
+    {
+        $m = $this->membership($client);
+        if ($m->joined_at || ! $m->requested_at) {
+            throw BusinessRuleException::make('no_request', 'There is no open request to join for this client.');
+        }
+        $m->update(['requested_at' => null, 'declined_reason' => $reason, 'declined_at' => now()]);
+        AuditLog::record($by, 'rewards.request_declined', 'client', $client->id, $reason);
+        $this->notifier->client($client, new LavishNotification('rewards.join_declined', 'Lavish Rewards request',
+            "We couldn’t enrol you in Lavish Rewards right now: {$reason}", 'info', ['screen' => 'rewards']));
 
         return $m->refresh();
     }
@@ -568,6 +600,8 @@ class LoyaltyService
         return [
             'member' => (bool) $m->joined_at,
             'joined_at' => $m->joined_at?->toIso8601String(),
+            'requested_at' => $m->requested_at?->toIso8601String(),   // asked to join in the app, waiting for reception
+            'declined_reason' => $m->declined_reason,
             'points_balance' => $m->points_balance,
             'held_points' => $held,                                  // asked for in open requests
             'available_points' => max(0, $m->points_balance - $held),

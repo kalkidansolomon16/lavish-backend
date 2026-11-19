@@ -327,11 +327,16 @@ class RewardsGiftCardTest extends TestCase
         // Not a member until reception enrols her; she can't join from the app.
         $this->as('+251912778899');
         $this->getJson('/api/v1/client/rewards')->assertOk()->assertJsonPath('data.member', false);
-        $this->postJson('/api/v1/client/rewards/join')->assertStatus(422)->assertJsonPath('code', 'enrol_at_reception');
+        // Asking to join from the app sends a request to reception.
+        $this->postJson('/api/v1/client/rewards/join', ['note' => 'I come every month'])->assertCreated()
+            ->assertJsonPath('data.member', false)->assertJsonPath('data.requested_at', fn ($v) => $v !== null);
+        $this->assertTrue(User::where('phone', self::RECEPTION)->first()->notifications()->get()->contains(fn ($n) => $n->data['type'] === 'rewards.join_requested'));
         $this->postJson('/api/v1/client/rewards/requests', ['kind' => 'treatment', 'points' => 10])->assertStatus(422)->assertJsonPath('code', 'not_member');
 
         $this->as(self::RECEPTION);
         $client = Client::where('phone', '+251912778899')->first();
+        $this->getJson('/api/v1/staff/rewards/members?requests=1')->assertOk()->assertJsonPath('data.0.client.id', $client->id)
+            ->assertJsonPath('data.0.request_note', 'I come every month')->assertJsonPath('meta.join_requests', 1);
         $this->postJson('/api/v1/staff/rewards/enrol', ['client_id' => $client->id, 'note' => 'Asked at the desk'])->assertCreated()
             ->assertJsonPath('data.rewards.member', true);
         $this->assertSame(200, $this->balance('+251912778899')); // welcome points (the rule can be set to 0)

@@ -72,6 +72,14 @@ class OrderController extends ClientController
         return new OrderResource($order->load(self::WITH));
     }
 
+    /** "I received my order" — the client confirms the delivery reached them; e-commerce then confirms it. */
+    public function received(Request $request, Order $order): OrderResource
+    {
+        $this->own($request, $order);
+
+        return new OrderResource($this->orders->confirmReceived($order)->load(self::WITH));
+    }
+
     /** "Notify me" on an out-of-stock product. */
     public function notifyMe(Request $request, Product $product): JsonResponse
     {

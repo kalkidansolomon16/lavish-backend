@@ -36,10 +36,19 @@ class StudentController extends Controller
         $this->own($request, $enrollment);
         $enrollment->load('course.teachers.user', 'course.branch', 'certificate.issuer', 'conversation');
         $modules = $enrollment->course->modules()->where('published', true)->get();
+        // Lessons stay locked until the course fee is marked paid by the academy.
+        $locked = $this->feeUnpaid($enrollment);
+        $published = $modules->count();
+        if ($locked) {
+            $modules = collect();
+        }
         $subs = ExerciseSubmission::query()->where('user_id', $request->user()->id)->whereIn('course_module_id', $modules->pluck('id'))->get()->keyBy('course_module_id');
 
         return response()->json(['data' => [
             'enrollment' => new EnrollmentResource($enrollment),
+            'locked' => $locked,
+            'locked_reason' => $locked ? 'Your lessons open once your course fee (ETB '.number_format($enrollment->fee).') is paid and confirmed by Lavish Academy.' : null,
+            'modules_published' => $published,
             'modules' => $modules->map(fn ($m) => (new CourseModuleResource($m))->withSubmission($subs->get($m->id))->toArray($request)),
             'upcoming_sessions' => ClassSessionResource::collection(
                 ClassSession::query()->with('teacher.user')->where('course_id', $enrollment->course_id)->where('ends_at', '>=', now())->orderBy('starts_at')->limit(10)->get()
@@ -105,6 +114,16 @@ class StudentController extends Controller
 
     private function enrolledIn(Request $request, CourseModule $module): void
     {
-        abort_unless($module->published && $request->user()->enrollments()->where('course_id', $module->course_id)->exists(), 404);
+        $enrollment = $request->user()->enrollments()->where('course_id', $module->course_id)->first();
+        abort_unless($module->published && $enrollment, 404);
+        if ($this->feeUnpaid($enrollment)) {
+            throw \App\Exceptions\BusinessRuleException::make('fee_unpaid', 'This lesson opens once your course fee is paid and confirmed by Lavish Academy.', status: 403);
+        }
+    }
+
+    /** A course with a fee that isn't marked paid yet. */
+    private function feeUnpaid(Enrollment $enrollment): bool
+    {
+        return (int) $enrollment->fee > 0 && $enrollment->paid_at === null;
     }
 }

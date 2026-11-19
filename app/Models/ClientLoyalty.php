@@ -20,6 +20,8 @@ class ClientLoyalty extends Model
     {
         return [
             'joined_at' => 'datetime',
+            'requested_at' => 'datetime',
+            'declined_at' => 'datetime',
             'tier_changed_at' => 'datetime',
             'tier_up_seen' => 'boolean',
         ];

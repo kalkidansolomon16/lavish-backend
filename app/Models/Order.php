@@ -24,6 +24,7 @@ class Order extends Model
             'discount' => 'integer',
             'total' => 'integer',
             'delivered_at' => 'datetime',
+            'received_at' => 'datetime',
         ];
     }
 

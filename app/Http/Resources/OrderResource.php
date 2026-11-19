@@ -20,6 +20,10 @@ class OrderResource extends JsonResource
             'id' => $this->id,
             'tracking_code' => $this->trackingCode(),
             'status' => $this->status->value,
+            // Delivery confirmation: the client taps "I received my order"; staff then confirm the delivery.
+            'received_at' => $this->received_at?->toIso8601String(),
+            'received_override' => $this->received_override,
+            'can_confirm_received' => in_array($this->status->value, ['out', 'ready'], true) && ! $this->received_at,
             'status_label' => $staff ? $this->status->label() : $this->status->clientLabel(),
             'items' => $this->whenLoaded('items', fn () => $this->items->map(fn ($i) => [
                 'product_id' => $i->product_id,
