@@ -79,7 +79,17 @@ class AppointmentController extends StaffController
         $appointment->load('client', 'service', 'doctor.user');
         $doctor = $appointment->doctor;
 
+        // Other clients who asked for the same doctor at an overlapping time (approving this one makes theirs clash).
+        $sameTime = $doctor ? \App\Models\Appointment::query()->with('client:id,name', 'service:id,name')->where('doctor_id', $doctor->id)
+            ->where('status', 'pending')->whereKeyNot($appointment->id)->overlapping($appointment->starts_at, $appointment->ends_at)->get()
+            ->map(fn ($a) => ['id' => $a->id, 'client' => $a->client?->name, 'service' => $a->service?->name, 'time' => $a->starts_at->format('H:i'), 'requested_at' => $a->created_at->toIso8601String()]) : collect();
+
         return response()->json(['data' => [
+            'doctor' => $doctor ? ['id' => $doctor->id, 'name' => $doctor->name] : null,
+            'slots' => $doctor ? $this->schedule->doctorDay($doctor, $appointment) : [],
+            'same_time_requests' => $sameTime->values(),
+            'free_times' => $doctor ? $this->schedule->freeTimes($appointment->service, $doctor, $appointment->starts_at->startOfDay()->max(now()->startOfDay())) : [],
+            'change_request' => $appointment->change_request ? [...$appointment->change_request, 'at' => $appointment->change_requested_at?->toIso8601String()] : null,
             'clashes' => $doctor ? $this->schedule->clashes($doctor, $appointment->starts_at, $appointment->ends_at, $appointment->id) : [],
             'day_plan' => $doctor ? $this->schedule->dayPlan($doctor, $appointment->starts_at) : [],
             'suggestions' => collect($this->schedule->suggest($appointment))->map(fn ($s) => [
@@ -101,6 +111,25 @@ class AppointmentController extends StaffController
         $doctor = isset($data['doctor_id']) ? Doctor::with('user')->find($data['doctor_id']) : null;
 
         return new AppointmentResource($this->appointments->approve($appointment, $request->user(), $doctor)->load(self::WITH));
+    }
+
+    /**
+     * The doctor is busy: ask the client to change. Body: kind time|doctor|either, message?, times[{date,time}]?, doctor_ids[]?
+     * The client gets a notification + SMS and changes the booking in the app.
+     */
+    public function requestChange(Request $request, Appointment $appointment): AppointmentResource
+    {
+        $data = $request->validate([
+            'kind' => ['required', Rule::in(['time', 'doctor', 'either'])],
+            'message' => ['nullable', 'string', 'max:300'],
+            'times' => ['nullable', 'array', 'max:8'],
+            'times.*.date' => ['required', 'date_format:Y-m-d'],
+            'times.*.time' => ['required', 'date_format:H:i'],
+            'doctor_ids' => ['nullable', 'array', 'max:6'],
+            'doctor_ids.*' => ['integer', 'exists:doctors,id'],
+        ]);
+
+        return new AppointmentResource($this->appointments->requestChange($appointment, $request->user(), $data['kind'], $data['message'] ?? null, $data['times'] ?? [], $data['doctor_ids'] ?? [])->load(self::WITH));
     }
 
     public function decline(Request $request, Appointment $appointment): AppointmentResource

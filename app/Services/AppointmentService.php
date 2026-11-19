@@ -135,6 +135,8 @@ class AppointmentService
             'status' => AppointmentStatus::Approved,
             'approved_by' => $by->id,
             'approved_at' => now(),
+            'change_request' => null,
+            'change_requested_at' => null,
         ]);
         if ($appt->is_online && ! $appt->video_link) {
             $appt->video_link = $this->videoLink($appt);
@@ -202,6 +204,94 @@ class AppointmentService
         }
 
         return $appt;
+    }
+
+    /**
+     * The chosen doctor is busy: reception asks the client to change the time, the doctor, or either, with
+     * suggested free times / doctors. The booking stays pending; the client gets a notification and an SMS and
+     * picks a new time or doctor in the app (changeByClient), or cancels.
+     *
+     * @param  list<array{date: string, time: string}>  $times
+     * @param  list<int>  $doctorIds
+     */
+    public function requestChange(Appointment $appt, User $by, string $kind, ?string $message, array $times = [], array $doctorIds = []): Appointment
+    {
+        if ($appt->status !== AppointmentStatus::Pending) {
+            throw BusinessRuleException::make('not_pending', 'Only pending bookings can be changed.');
+        }
+        $appt->loadMissing('client', 'service', 'doctor.user');
+        $doctors = Doctor::query()->bookable()->with('user')->whereKey($doctorIds)->get()
+            ->filter(fn (Doctor $d) => $appt->service->is_online || $d->offers($appt->service))
+            ->map(fn (Doctor $d) => ['id' => $d->id, 'name' => $d->name])->values()->all();
+        $times = collect($times)->filter(fn ($t) => ! empty($t['date']) && ! empty($t['time']))
+            ->map(fn ($t) => ['date' => $t['date'], 'time' => $t['time']])->unique(fn ($t) => $t['date'].' '.$t['time'])->values()->all();
+
+        $appt->update([
+            'change_request' => ['kind' => $kind, 'message' => $message, 'times' => $times, 'doctors' => $doctors, 'by' => $by->name],
+            'change_requested_at' => now(),
+        ]);
+
+        $when = $appt->starts_at->format('D j M, H:i');
+        $who = $appt->doctor ? "{$appt->doctor->name} is" : 'Our doctors are';
+        $ask = match ($kind) {
+            'time' => 'Please choose another time',
+            'doctor' => 'Please choose another doctor',
+            default => 'Please choose another time or another doctor',
+        };
+        $text = "{$who} not available for your {$appt->service->name} on {$when}. {$ask} in the Lavish app (My appointments).".($message ? " {$message}" : '');
+        $this->notifier->client($appt->client, new LavishNotification('appointment.change_requested', 'Please change your booking', $text, 'event_repeat', ['screen' => 'appointment', 'id' => $appt->id]));
+        if ($appt->client->phone) {
+            $this->messenger->sms($appt->client->phone, "Lavish Medical Spa: {$text}", $appt);
+        }
+
+        return $appt->refresh();
+    }
+
+    /**
+     * The client changes a pending booking from the app: a new date/time and/or another doctor. The new slot must
+     * be free. Clears reception's change request and tells reception to approve it.
+     *
+     * @param  array{date?: ?string, time?: ?string, doctor_id?: ?int}  $data
+     */
+    public function changeByClient(Appointment $appt, array $data): Appointment
+    {
+        if ($appt->status !== AppointmentStatus::Pending) {
+            throw BusinessRuleException::make('not_pending', 'Only bookings waiting for confirmation can be changed. Cancel and book again instead.');
+        }
+        $appt->loadMissing('client', 'service', 'doctor');
+        $service = $appt->service;
+        $doctor = $appt->doctor;
+        if (array_key_exists('doctor_id', $data) && $data['doctor_id'] !== null && (int) $data['doctor_id'] !== $appt->doctor_id) {
+            $doctor = Doctor::query()->bookable()->with('services:id', 'user.staffProfile')->find($data['doctor_id']);
+            if (! $doctor) {
+                throw BusinessRuleException::make('doctor_unavailable', 'This doctor is not taking bookings.');
+            }
+            if (! $service->is_online && ! $doctor->offers($service)) {
+                throw BusinessRuleException::make('doctor_not_offering', "{$doctor->name} doesn’t offer {$service->name}.");
+            }
+        }
+        $date = $data['date'] ?? $appt->starts_at->toDateString();
+        $time = $data['time'] ?? $appt->starts_at->format('H:i');
+        [$start, $end] = $this->window($date, $time, $service, forClient: true);
+
+        if ($doctor && $this->schedule->clashes($doctor, $start, $end, $appt->id, includePending: true)) {
+            throw BusinessRuleException::make('slot_taken', "{$doctor->name} isn’t free then. Please pick another time.");
+        }
+        if ($this->schedule->clientBusy($appt->client, $start, $end, $appt->id)) {
+            throw BusinessRuleException::make('client_double_booked', 'You already have an appointment at that time.');
+        }
+
+        $before = ($appt->doctor?->name ?? 'any doctor').' · '.$appt->starts_at->format('D j M, H:i');
+        $appt->update([
+            'doctor_id' => $doctor?->id, 'starts_at' => $start, 'ends_at' => $end,
+            'branch_id' => $service->is_online ? null : ($doctor?->branch()?->id ?? $appt->branch_id),
+            'change_request' => null, 'change_requested_at' => null,
+        ]);
+        $after = ($doctor?->name ?? 'any doctor').' · '.$start->format('D j M, H:i');
+        $this->notifier->staff('appointments.approve', new LavishNotification('appointment.changed', 'Booking changed — ready to approve',
+            "{$appt->client->name} changed {$service->name}: {$before} → {$after}.", 'event_available', null, '/appointments?focus='.$appt->id));
+
+        return $appt->refresh();
     }
 
     /** The doctor marks the treatment done. Unlocks chat with the client. */

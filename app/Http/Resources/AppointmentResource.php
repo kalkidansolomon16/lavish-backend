@@ -36,6 +36,8 @@ class AppointmentResource extends JsonResource
             // Online session confirmed but not paid yet: the app shows "Pay to unlock your video link".
             'video_link_locked' => $this->is_online && $this->status === AppointmentStatus::Approved && $payment?->status !== PaymentStatus::Paid,
             'decline_reason' => $this->decline_reason,
+            // Reception asked the client to change this booking (doctor busy): kind time|doctor|either, message, times[], doctors[]
+            'change_request' => $this->change_request ? [...$this->change_request, 'at' => $this->change_requested_at?->toIso8601String()] : null,
             'payment' => $payment ? new PaymentResource($payment) : null,
             'approved_at' => $this->approved_at?->toIso8601String(),
             'completed_at' => $this->completed_at?->toIso8601String(),

@@ -54,7 +54,7 @@ class PrescriptionController extends StaffController
             'items.*.starts_on' => ['nullable', 'date'],
             'items.*.duration_days' => ['nullable', 'integer', 'min:1', 'max:365'],
         ]);
-        $rx = $this->prescriptions->create($this->myDoctor($request), Client::findOrFail($data['client_id']), $data['note'] ?? null, $data['items']);
+        $rx = $this->prescriptions->create($this->myDoctor($request), Client::findOrFail($data['client_id']), $data['note'] ?? null, $data['items'], $request->user()->hasRole('ceo'));
 
         return new PrescriptionResource($rx->load(['client', 'doctor.user', 'items.product' => fn ($p) => $p->withStock()]));
     }

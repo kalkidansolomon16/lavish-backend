@@ -26,6 +26,8 @@ class Appointment extends Model
             'approved_at' => 'datetime',
             'completed_at' => 'datetime',
             'cancelled_at' => 'datetime',
+            'change_request' => 'array',
+            'change_requested_at' => 'datetime',
             'price' => 'integer',
         ];
     }
