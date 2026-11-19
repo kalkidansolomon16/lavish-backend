@@ -89,4 +89,24 @@ class AcademyTest extends TestCase
         $this->postJson("/api/v1/staff/academy/enrollments/{$enrollment->id}/certificate")->assertOk()
             ->assertJsonPath('data.certificate.number', 'LA-'.now()->year.'-0002');
     }
+
+    public function test_lessons_stay_locked_until_the_course_fee_is_paid(): void
+    {
+        $eden = User::where('phone', self::EDEN)->first();
+        $enrollment = $eden->enrollments()->where('status', 'active')->first();
+        $enrollment->update(['paid_at' => null]);
+        $module = $enrollment->course->modules()->where('published', true)->first();
+
+        $this->as(self::EDEN);
+        $this->getJson("/api/v1/student/enrollments/{$enrollment->id}")->assertOk()
+            ->assertJsonPath('data.locked', true)->assertJsonCount(0, 'data.modules');
+        $this->getJson("/api/v1/student/modules/{$module->id}")->assertForbidden()->assertJsonPath('code', 'fee_unpaid');
+
+        // The academy marks the fee paid → the lessons open.
+        $this->as(self::CEO);
+        $this->postJson("/api/v1/staff/academy/enrollments/{$enrollment->id}/mark-paid")->assertOk();
+        $this->as(self::EDEN);
+        $this->getJson("/api/v1/student/enrollments/{$enrollment->id}")->assertJsonPath('data.locked', false);
+        $this->getJson("/api/v1/student/modules/{$module->id}")->assertOk();
+    }
 }

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\OrderPaymentMethod;
+use App\Enums\PaymentMethod;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentStatus;
 use App\Enums\PrescriptionStatus;
@@ -107,11 +108,22 @@ class OrderService
      * @param  array{name?: string, phone?: string}|null  $courier  required when handing to the courier
      * @return list<Product>
      */
-    public function advance(Order $order, User $by, ?array $courier = null): array
+    /**
+     * @param  array{collected?: bool, method?: string}|null  $collection  pay-on-delivery orders: did the courier collect
+     *                                                                   the money, and how. Not collected → stays unpaid.
+     */
+    public function advance(Order $order, User $by, ?array $courier = null, ?string $overrideReason = null, ?array $collection = null): array
     {
         $next = $order->status->next();
         if (! $next) {
             throw BusinessRuleException::make('order_closed', 'This order is already '.$order->status->value.'.');
+        }
+        // Delivered only after the client confirmed in the app that they received it — or with a reason.
+        if ($next === OrderStatus::Delivered && ! $order->received_at) {
+            if (blank($overrideReason)) {
+                throw BusinessRuleException::make('awaiting_client_confirmation', 'The client hasn’t confirmed they received the order yet. Wait for them to tap “I received my order”, or give a reason (e.g. confirmed by phone).');
+            }
+            $order->received_override = $overrideReason;
         }
         $order->loadMissing('items.product');
 
@@ -129,8 +141,16 @@ class OrderService
             $order->fill(['courier_name' => $courier['name'], 'courier_phone' => $courier['phone'] ?? null]);
         }
 
+        // Pay on delivery: staff must say whether the money was collected (never assumed).
+        $podOpen = $next === OrderStatus::Delivered && $order->payment_method === OrderPaymentMethod::PayOnDelivery && $order->payment?->isOpen();
+        if ($podOpen && ! isset($collection['collected'])) {
+            throw BusinessRuleException::make('collection_required', 'Pay on delivery: did the courier collect the payment? Choose “Collected” (and how) or “Not paid yet”.');
+        }
+        $collectMethod = $podOpen && ! empty($collection['collected'])
+            ? (PaymentMethod::tryFrom($collection['method'] ?? 'cash') ?? PaymentMethod::Cash) : null;
+
         $low = [];
-        DB::transaction(function () use ($order, $next, $by, &$low) {
+        DB::transaction(function () use ($order, $next, $by, &$low, $collectMethod) {
             if ($next === OrderStatus::Delivered) {
                 foreach ($order->items as $item) {
                     if (! $item->product) {
@@ -144,8 +164,8 @@ class OrderService
                 }
                 $order->delivered_at = now();
                 $payment = $order->payment;
-                if ($order->payment_method === OrderPaymentMethod::PayOnDelivery && $payment?->isOpen()) {
-                    $this->payments->recordManual($payment, PaymentService::methodForOrder($order->payment_method), $by);
+                if ($collectMethod && $payment?->isOpen()) {
+                    $this->payments->recordManual($payment, $collectMethod, $by);
                 }
             }
             $order->status = $next;
@@ -155,9 +175,34 @@ class OrderService
         $this->stamp($order, $next, $by);
         if ($next === OrderStatus::Delivered) {
             $this->loyalty->creditOrder($order->refresh());
+            // Delivered but not paid: remind the client and keep it on reception's "not paid" list.
+            if ($podOpen && ! $collectMethod && $order->payment?->isOpen()) {
+                $order->loadMissing('client');
+                $due = 'ETB '.number_format($order->payment->dueAmount());
+                $this->notifier->client($order->client, new LavishNotification('payment.due_now', 'Please pay for your order',
+                    "Your order #{$order->id} was delivered. Please pay {$due} (Telebirr, CBE Birr, bank transfer or cash) and upload your receipt in the app.", 'payments', ['screen' => 'payment', 'id' => $order->payment->id]));
+                $this->notifier->staff('payments.collect', new LavishNotification('payment.collect_now', 'Delivered order not paid',
+                    "{$order->client->name}’s order #{$order->id} was delivered but not paid ({$due}).", 'point_of_sale', null, '/payments?tab=owing'));
+            }
         }
 
         return $low;
+    }
+
+    /** The client taps "I received my order" in the app (while it is out for delivery or ready). */
+    public function confirmReceived(Order $order): Order
+    {
+        if (! in_array($order->status, [OrderStatus::Out, OrderStatus::Ready], true)) {
+            throw BusinessRuleException::make('not_out_for_delivery', $order->status === OrderStatus::Delivered ? 'This order is already delivered.' : 'You can confirm once the order is on its way to you.');
+        }
+        if (! $order->received_at) {
+            $order->update(['received_at' => now()]);
+            $order->loadMissing('client');
+            $this->notifier->staff('orders.deliver', new LavishNotification('order.received', 'Client received the order',
+                "{$order->client->name} confirmed they received order #{$order->id}. Confirm the delivery in Orders.", 'inventory_2', null, '/orders'));
+        }
+
+        return $order;
     }
 
     public function cancel(Order $order, User $by, ?string $reason = null): Order

@@ -47,6 +47,7 @@ class AppServiceProvider extends ServiceProvider
             'exercise_submission' => Models\ExerciseSubmission::class,
             'gift_card' => Models\GiftCard::class,
             'payment_receipt' => Models\PaymentReceipt::class,
+            'prescription' => Models\Prescription::class,
         ]);
 
         // Log N+1 queries while developing (storage/logs/laravel.log) so they can be fixed with eager loading.

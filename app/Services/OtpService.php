@@ -66,6 +66,6 @@ class OtpService
 
     private function useDevCode(): bool
     {
-        return ! app()->isProduction() && config('lavish.sms.driver') === 'log';
+        return config('lavish.sms.driver') === 'log' && (! app()->isProduction() || config('lavish.otp.allow_test_code'));
     }
 }

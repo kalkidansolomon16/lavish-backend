@@ -22,6 +22,43 @@ class PaymentController extends StaffController
      * Filters: status (comma list), type=appointment|order, method, client_id, q (client), from / to (created date), online=1.
      * meta has totals for the filtered set.
      */
+    /**
+     * Clients who finished a treatment and haven't paid (receipts waiting to be checked don't count) — shown as a
+     * warning on every page for staff who collect payments, so nobody leaves without paying. Today's first.
+     */
+    public function owing(): JsonResponse
+    {
+        $rows = Payment::query()->with('client', 'payable')
+            ->whereIn('status', [PaymentStatus::Unpaid->value, PaymentStatus::Pending->value, PaymentStatus::Failed->value])
+            ->where(fn ($q) => $q
+                ->where(fn ($a) => $a->where('payable_type', 'appointment')->whereIn('payable_id', \App\Models\Appointment::query()->where('status', 'completed')->select('id')))
+                ->orWhere(fn ($o) => $o->where('payable_type', 'order')->whereIn('payable_id', \App\Models\Order::query()->where('status', 'delivered')->select('id'))))
+            ->get()
+            ->filter(fn (Payment $p) => $p->dueAmount() > 0)
+            ->sortByDesc(fn (Payment $p) => $this->doneAt($p))
+            ->values();
+        $today = $rows->filter(fn (Payment $p) => $this->doneAt($p)?->isToday());
+
+        return response()->json([
+            'data' => $rows->map(fn (Payment $p) => [
+                'payment' => new PaymentResource($p),
+                'client' => ['id' => $p->client?->id, 'name' => $p->client?->name, 'phone' => $p->client?->phone],
+                'treatment' => $p->description,
+                'due' => $p->dueAmount(),
+                'completed_at' => $this->doneAt($p)?->toIso8601String(),
+                'today' => (bool) $this->doneAt($p)?->isToday(),
+                'kind' => $p->payable_type === 'order' ? 'order' : 'treatment',
+            ]),
+            'meta' => ['count' => $rows->count(), 'today' => $today->count(), 'total' => (int) $rows->sum(fn ($p) => $p->dueAmount())],
+        ]);
+    }
+
+    /** When the treatment was finished / the order delivered. */
+    private function doneAt(Payment $p): ?\Carbon\CarbonInterface
+    {
+        return $p->payable_type === 'order' ? $p->payable?->delivered_at : $p->payable?->completed_at;
+    }
+
     public function index(Request $request): AnonymousResourceCollection
     {
         $q = Payment::query()->with('client', 'recorder', 'payable', 'receipts.attachments', 'receipts.uploader', 'receipts.reviewer')

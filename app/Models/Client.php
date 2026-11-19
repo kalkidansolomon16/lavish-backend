@@ -57,6 +57,23 @@ class Client extends Model
         return $this->hasMany(Payment::class);
     }
 
+    /**
+     * Bills for treatments that are already done but not paid (a receipt waiting to be checked doesn't count).
+     * Used to stop a client leaving without paying: reception is alerted, and new bookings wait until it is paid.
+     */
+    public function unpaidTreatmentBills()
+    {
+        return $this->payments()->where('payable_type', 'appointment')
+            ->whereIn('status', [\App\Enums\PaymentStatus::Unpaid->value, \App\Enums\PaymentStatus::Pending->value, \App\Enums\PaymentStatus::Failed->value])
+            ->whereIn('payable_id', Appointment::query()->where('client_id', $this->id)->where('status', 'completed')->select('id'));
+    }
+
+    /** ETB still owed for finished treatments. */
+    public function owedForTreatments(): int
+    {
+        return (int) $this->unpaidTreatmentBills()->get()->sum(fn (Payment $p) => $p->dueAmount());
+    }
+
     public function orders(): HasMany
     {
         return $this->hasMany(Order::class);

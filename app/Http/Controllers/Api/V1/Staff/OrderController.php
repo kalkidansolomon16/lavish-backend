@@ -52,8 +52,14 @@ class OrderController extends StaffController
      */
     public function advance(Request $request, Order $order): JsonResponse
     {
-        $data = $request->validate(['courier' => ['nullable', 'array'], 'courier.name' => ['nullable', 'string', 'max:120'], 'courier.phone' => ['nullable', 'string', 'max:20']]);
-        $low = $this->orders->advance($order, $request->user(), $data['courier'] ?? null);
+        $data = $request->validate([
+            'courier' => ['nullable', 'array'], 'courier.name' => ['nullable', 'string', 'max:120'], 'courier.phone' => ['nullable', 'string', 'max:20'],
+            'override_reason' => ['nullable', 'string', 'min:4', 'max:255'], // confirm delivery without the client's tap in the app
+            'collected' => ['nullable', 'boolean'],                          // pay on delivery: money collected?
+            'method' => ['nullable', 'in:cash,telebirr,cbe_birr,bank_transfer,card'],
+        ]);
+        $collection = array_key_exists('collected', $data) && $data['collected'] !== null ? ['collected' => (bool) $data['collected'], 'method' => $data['method'] ?? 'cash'] : null;
+        $low = $this->orders->advance($order, $request->user(), $data['courier'] ?? null, $data['override_reason'] ?? null, $collection);
 
         return response()->json([
             'data' => new OrderResource($order->fresh()->load(self::WITH)),

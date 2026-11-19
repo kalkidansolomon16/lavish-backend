@@ -99,6 +99,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('orders', [Client\OrderController::class, 'index']);
         Route::post('orders', [Client\OrderController::class, 'store']);
         Route::get('orders/{order}', [Client\OrderController::class, 'show']);
+        Route::post('orders/{order}/received', [Client\OrderController::class, 'received']);
         Route::post('products/{product}/notify-me', [Client\OrderController::class, 'notifyMe']);
 
         Route::get('prescriptions', [Client\PrescriptionController::class, 'index']);
@@ -190,6 +191,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::controller(Staff\PaymentController::class)->group(function () {
             Route::get('payments', 'index')->middleware('permission:page.payments');
+            Route::get('payments/owing', 'owing')->middleware('permission:page.payments|payments.collect');
             Route::post('payments/{payment}/record', 'record')->middleware('permission:payments.collect');
             Route::post('payments/{payment}/refund', 'refund')->middleware('permission:payments.refund');
             Route::post('payments/{payment}/verify', 'verify')->middleware('permission:payments.collect');
@@ -210,6 +212,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('clients/{client}', 'client');
                 Route::post('clients/{client}/join', 'join')->middleware('permission:rewards.enroll');
                 Route::post('enrol', 'enrol')->middleware('permission:rewards.enroll');
+                Route::post('clients/{client}/decline-request', 'declineRequest')->middleware('permission:rewards.enroll');
                 Route::post('clients/{client}/redeem/{reward}', 'redeem')->middleware('permission:payments.collect|rewards.manage');
             });
             Route::middleware('permission:rewards.manage')->group(function () {

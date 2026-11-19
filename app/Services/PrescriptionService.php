@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
 
 class PrescriptionService
 {
-    public function __construct(private Notifier $notifier, private ChatService $chat) {}
+    public function __construct(private Notifier $notifier, private ChatService $chat, private Messenger $messenger) {}
 
     /**
      * @param  list<array{product_id?: ?int, custom_name?: ?string, quantity: int, instructions?: ?string, reminder_times?: ?list<string>, starts_on?: ?string, duration_days?: ?int}>  $items
@@ -50,8 +50,40 @@ class PrescriptionService
         $count = count($items);
         $this->notifier->client($client, new LavishNotification('prescription.new', 'New prescription',
             "{$doctor->name} sent you {$count} item(s) for your routine.", 'medication', ['screen' => 'prescription', 'id' => $rx->id]));
+        $this->emailPrescription($rx->load('items.product'), $client, $doctor);
 
         return $rx->load('items.product');
+    }
+
+    /** The prescription by email too (to the client's email on file), with how to use each item and the reminders. */
+    private function emailPrescription(Prescription $rx, Client $client, Doctor $doctor): void
+    {
+        $to = $client->email ?: $client->user?->email;
+        if (! $to) {
+            return;
+        }
+        $lines = $rx->items->map(function (PrescriptionItem $i, int $n) {
+            $name = $i->product?->name ?? $i->custom_name;
+            $row = ($n + 1).". {$name} × {$i->quantity}";
+            if ($i->instructions) {
+                $row .= "\n   How to use: {$i->instructions}";
+            }
+            if (! empty($i->reminder_times)) {
+                $row .= "\n   Reminders: ".implode(', ', $i->reminder_times).($i->duration_days ? " for {$i->duration_days} days" : '').
+                    ($i->starts_on ? ' from '.$i->starts_on->format('j M Y') : '');
+            }
+            if ($i->product) {
+                $row .= "\n   Available in the Lavish shop".($i->was_out_of_stock ? ' (out of stock right now — we’ll let you know when it’s back)' : '');
+            }
+
+            return $row;
+        })->implode("\n\n");
+        $first = trim(explode(' ', $client->name)[0] ?? '');
+        $body = "Dear {$first},\n\n{$doctor->name} sent you a prescription on ".$rx->created_at->format('j M Y').":\n\n{$lines}".
+            ($rx->note ? "\n\nNote from {$doctor->name}:\n{$rx->note}" : '').
+            "\n\nYou can see it in the Lavish app under Care → Prescriptions, order the Lavish products there, and get reminders on your phone.".
+            "\n\nLavish Medical Spa";
+        $this->messenger->email($to, "Your prescription from {$doctor->name}", $body, $rx);
     }
 
     /** Re-suggests a product that was out of stock when prescribed. Arrives in the client's chat. */

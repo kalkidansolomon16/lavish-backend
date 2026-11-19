@@ -49,6 +49,9 @@ return [
         'resend_seconds' => 60,
         // In local/testing with the log SMS driver this fixed code is accepted, so the mobile developer can test.
         'dev_code' => env('LAVISH_DEV_OTP', '123456'),
+        // TEMPORARY on a live server before SMS is set up: LAVISH_TEST_OTP=true accepts the fixed code too (only while
+        // SMS_DRIVER=log). Remove it as soon as AfroMessage is configured — anyone could sign up with any phone.
+        'allow_test_code' => (bool) env('LAVISH_TEST_OTP', false),
     ],
 
     'sms' => [
