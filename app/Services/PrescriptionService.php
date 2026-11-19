@@ -19,9 +19,10 @@ class PrescriptionService
     /**
      * @param  list<array{product_id?: ?int, custom_name?: ?string, quantity: int, instructions?: ?string, reminder_times?: ?list<string>, starts_on?: ?string, duration_days?: ?int}>  $items
      */
-    public function create(Doctor $doctor, Client $client, ?string $note, array $items): Prescription
+    public function create(Doctor $doctor, Client $client, ?string $note, array $items, bool $anyClient = false): Prescription
     {
-        $isPatient = $client->primary_doctor_id === $doctor->id
+        // Doctors prescribe for their own patients; the CEO (the clinic's medical director) for any client.
+        $isPatient = $anyClient || $client->primary_doctor_id === $doctor->id
             || $client->appointments()->where('doctor_id', $doctor->id)->whereIn('status', ['approved', 'completed'])->exists();
         if (! $isPatient) {
             throw BusinessRuleException::make('not_your_patient', 'You can only prescribe for your own patients.', status: 403);

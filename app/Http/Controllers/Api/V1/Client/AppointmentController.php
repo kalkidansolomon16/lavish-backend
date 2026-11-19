@@ -90,6 +90,19 @@ class AppointmentController extends ClientController
         return new AppointmentResource($this->appointments->cancelByClient($appointment)->load(self::WITH));
     }
 
+    /** Change a booking that is still waiting for confirmation: new date + time and/or another doctor. */
+    public function change(Request $request, Appointment $appointment): AppointmentResource
+    {
+        $this->own($request, $appointment);
+        $data = $request->validate([
+            'date' => ['nullable', 'required_with:time', 'date_format:Y-m-d'],
+            'time' => ['nullable', 'required_with:date', 'date_format:H:i'],
+            'doctor_id' => ['nullable', 'exists:doctors,id'],
+        ]);
+
+        return new AppointmentResource($this->appointments->changeByClient($appointment, $data)->load(self::WITH));
+    }
+
     /** Rate the doctor after a completed treatment (once). */
     public function review(Request $request, Appointment $appointment): AppointmentResource
     {

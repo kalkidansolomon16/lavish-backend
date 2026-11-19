@@ -33,5 +33,7 @@ class AdminSeeder extends Seeder
         ]);
         $user->roles()->attach(Role::query()->where('key', 'ceo')->value('id'));
         $user->staffProfile()->create(['position' => 'Chief Executive Officer']);
+        // The CEO is also a doctor (medical director): she writes prescriptions.
+        $user->doctor()->create(['specialty' => 'Medical Director', 'access' => \App\Enums\DoctorAccess::Active, 'availability' => \App\Enums\DoctorAvailability::Available]);
     }
 }

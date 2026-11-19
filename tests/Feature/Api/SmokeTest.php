@@ -32,7 +32,7 @@ class SmokeTest extends TestCase
 
     public function test_public_catalogue(): void
     {
-        $doctor = Doctor::query()->where('access', 'active')->first();
+        $doctor = Doctor::query()->where('access', 'active')->whereHas('services')->first();
         $service = $doctor->services()->first();
         foreach ([
             '/api/v1/catalog/config', '/api/v1/catalog/branches', '/api/v1/catalog/services', '/api/v1/catalog/doctors',

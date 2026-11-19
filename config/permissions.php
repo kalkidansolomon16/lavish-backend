@@ -56,7 +56,7 @@ $catalogue = [
     ],
     'Prescriptions' => [
         'page.prescriptions' => ['View prescriptions'],
-        'prescriptions.create' => ['Write prescriptions & suggest restocked products', ['doctor']],
+        'prescriptions.create' => ['Write prescriptions & suggest restocked products', ['doctor', 'ceo']],
         'prescriptions.fulfil' => ['Turn prescriptions into orders'],
     ],
     'Patient chat' => [

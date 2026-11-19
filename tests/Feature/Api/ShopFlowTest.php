@@ -140,6 +140,24 @@ class ShopFlowTest extends TestCase
         $this->postJson("/api/v1/staff/prescriptions/{$rx}/fulfil")->assertStatus(422)->assertJsonPath('code', 'already_ordered');
     }
 
+    public function test_the_ceo_is_a_doctor_and_prescribes_for_any_client(): void
+    {
+        $client = User::where('phone', self::TIGIST)->first()->client;
+        $ceo = $this->as(self::CEO);
+        $me = $this->getJson('/api/v1/auth/me')->assertOk();
+        $this->assertNotNull($me->json('data.doctor_id'));
+        $this->assertContains('prescriptions.create', $me->json('data.permissions'));
+        $this->postJson('/api/v1/staff/prescriptions', [
+            'client_id' => $client->id, 'items' => [['custom_name' => 'Tretinoin 0.025% cream', 'quantity' => 1, 'instructions' => 'At night']],
+        ])->assertCreated()->assertJsonPath('data.doctor.name', $ceo->name);
+
+        // Other doctors still prescribe only for their own patients.
+        $stranger = \App\Models\Client::create(['name' => 'Not Yonas Patient', 'phone' => '+251944000111']);
+        $this->as(self::DR_YONAS);
+        $this->postJson('/api/v1/staff/prescriptions', ['client_id' => $stranger->id, 'items' => [['custom_name' => 'x', 'quantity' => 1]]])
+            ->assertStatus(403);
+    }
+
     public function test_doctor_resuggests_a_restocked_product_in_the_chat(): void
     {
         $item = PrescriptionItem::query()->where('was_out_of_stock', true)->whereHas('product', fn ($p) => $p->where('sku', 'LV-HAI-005'))->first();

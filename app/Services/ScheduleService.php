@@ -192,6 +192,59 @@ class ScheduleService
     }
 
     /** Is the client already booked at that time (any doctor)? */
+    /**
+     * The doctor's booking slots on the appointment's day, each with what is there — shown to reception before
+     * approving or assigning. state: free | this (this booking) | booked (approved treatment) | requested (another
+     * client's pending request) | class (teaching) | past. `who` says who / what holds it.
+     */
+    public function doctorDay(Doctor $doctor, Appointment $appt): array
+    {
+        $date = $appt->starts_at->toDateString();
+        $dayStart = self::at($date, '00:00');
+        $appts = Appointment::query()->with('client:id,name', 'service:id,name')->where('doctor_id', $doctor->id)->holding()
+            ->overlapping($dayStart, $dayStart->endOfDay())->get();
+        $classes = ClassSession::query()->where('teacher_id', $doctor->id)->overlapping($dayStart, $dayStart->endOfDay())->get();
+        $minutes = $appt->duration_minutes ?: 60;
+
+        return collect(config('lavish.booking.slots'))->map(function (string $time) use ($date, $appt, $appts, $classes, $minutes) {
+            $start = self::at($date, $time);
+            $end = $start->addMinutes($minutes);
+            $hit = fn ($x) => $x->starts_at < $end && $x->ends_at > $start;
+            $class = $classes->first($hit);
+            $booked = $appts->first(fn ($a) => $a->id !== $appt->id && $a->status === AppointmentStatus::Approved && $hit($a));
+            $requested = $appts->first(fn ($a) => $a->id !== $appt->id && $a->status === AppointmentStatus::Pending && $hit($a));
+            [$state, $who] = match (true) {
+                $start->format('H:i') === $appt->starts_at->format('H:i') && ! $class && ! $booked => ['this', $appt->client?->name],
+                (bool) $class => ['class', "Teaching “{$class->title}”"],
+                (bool) $booked => ['booked', "{$booked->client?->name} — {$booked->service?->name}"],
+                (bool) $requested => ['requested', "{$requested->client?->name} asked for {$requested->service?->name}"],
+                $start->lt(now()) => ['past', null],
+                default => ['free', null],
+            };
+
+            return ['time' => $time, 'state' => $state, 'who' => $who, 'this_time' => $start->format('H:i') === $appt->starts_at->format('H:i')];
+        })->all();
+    }
+
+    /** Free start times for a service with this doctor on the next few days (for "ask the client to change"). */
+    public function freeTimes(Service $service, Doctor $doctor, CarbonInterface $from, int $days = 4, int $limit = 8): array
+    {
+        $out = [];
+        for ($i = 0; $i < $days && count($out) < $limit; $i++) {
+            $date = $from->copy()->addDays($i)->toDateString();
+            foreach ($this->slots($service, $date, $doctor) as $slot) {
+                if ($slot['available']) {
+                    $out[] = ['date' => $date, 'time' => $slot['time']];
+                    if (count($out) >= $limit) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $out;
+    }
+
     public function clientBusy(Client $client, CarbonInterface $start, CarbonInterface $end, ?int $ignoreId = null): bool
     {
         return $client->appointments()->holding()->overlapping($start, $end)

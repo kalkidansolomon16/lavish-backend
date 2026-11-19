@@ -88,6 +88,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('appointments', [Client\AppointmentController::class, 'store']);
         Route::get('appointments/{appointment}', [Client\AppointmentController::class, 'show']);
         Route::post('appointments/{appointment}/cancel', [Client\AppointmentController::class, 'cancel']);
+        Route::post('appointments/{appointment}/change', [Client\AppointmentController::class, 'change']);
         Route::post('appointments/{appointment}/review', [Client\AppointmentController::class, 'review']);
 
         Route::get('payments', [Client\PaymentController::class, 'index']);
@@ -174,6 +175,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('appointments/{appointment}/check', 'check');
                 Route::post('appointments/{appointment}/approve', 'approve');
                 Route::post('appointments/{appointment}/decline', 'decline');
+                Route::post('appointments/{appointment}/request-change', 'requestChange');
             });
             Route::post('appointments/{appointment}/complete', 'complete')->middleware('permission:appointments.complete');
         });
