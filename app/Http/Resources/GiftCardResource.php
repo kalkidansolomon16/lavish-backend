@@ -36,6 +36,8 @@ class GiftCardResource extends JsonResource
             'balance' => $this->balance,
             'status' => $expired ? 'expired' : $this->status, // pending_payment | awaiting_activation | in_stock | active | redeemed | expired | void
             'code' => $this->when(! $staff && $role !== null && ! in_array($this->status, ['pending_payment'], true), fn () => $this->code_encrypted),
+            // Printed cards: staff see the number to show / re-print its barcode.
+            'card_number' => $this->when($staff && $this->physical && $request->user()?->hasPermission('giftcards.sell', 'giftcards.stock'), fn () => $this->code_encrypted),
             'used' => max(0, $this->initial_value - $this->balance),
             'activated_at' => $this->activated_at?->toIso8601String(),
             'activated_by' => $this->when($staff && $this->relationLoaded('activator'), fn () => $this->activator?->name),
@@ -62,6 +64,13 @@ class GiftCardResource extends JsonResource
             'purchaser_client_id' => $this->when($staff, $this->purchaser_client_id),
             'recipient_client_id' => $this->when($staff, $this->recipient_client_id),
             'replaces_id' => $this->when($staff, $this->replaces_id),
+            // Staff: the messages sent to the recipient, and whether they really left the server.
+            'messages' => $this->when($staff && $this->relationLoaded('outboundMessages'), fn () => $this->outboundMessages->map(fn ($m) => [
+                'channel' => $m->channel, 'to' => $m->to, 'at' => $m->created_at->toIso8601String(),
+                'status' => $m->status === 'failed' ? 'failed'
+                    : (($m->channel === 'email' && config('mail.default') === 'log') || ($m->channel === 'sms' && config('lavish.sms.driver') === 'log') ? 'not_set_up' : 'sent'),
+                'error' => $m->error,
+            ])),
             'ledger' => $this->when($this->relationLoaded('ledger'), fn () => $this->ledger->map(fn ($l) => [
                 'id' => $l->id, 'type' => $l->type, 'amount' => $l->amount, 'balance_after' => $l->balance_after,
                 'appointment_id' => $l->appointment_id, 'order_id' => $l->order_id, 'reason' => $l->reason,

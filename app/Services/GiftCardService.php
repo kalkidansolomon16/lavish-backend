@@ -187,24 +187,26 @@ class GiftCardService
         if ($value < 100) {
             throw BusinessRuleException::make('gift_card_amount', 'A gift card must be worth at least ETB 100.');
         }
-        $buyer = ! empty($data['purchaser_client_id']) ? Client::find($data['purchaser_client_id']) : null;
+        $promo = $type === 'promo';
+        $buyer = ! $promo && ! empty($data['purchaser_client_id']) ? Client::find($data['purchaser_client_id']) : null;
         $phone = ! empty($data['recipient_phone']) ? (Phone::normalize($data['recipient_phone']) ?? $data['recipient_phone']) : null;
 
-        return DB::transaction(function () use ($card, $data, $type, $service, $value, $buyer, $phone, $method, $by, $payments) {
+        return DB::transaction(function () use ($card, $data, $type, $service, $value, $buyer, $phone, $method, $by, $payments, $promo) {
             $card->update([
                 'type' => $type, 'service_id' => $service?->id, 'initial_value' => $value, 'balance' => $value,
                 'status' => 'pending_payment', 'sold_by' => $by->id,
-                'purchaser_client_id' => $buyer?->id, 'purchaser_name' => $buyer?->name ?? ($data['purchaser_name'] ?? null),
+                'purchaser_client_id' => $buyer?->id, 'purchaser_name' => $promo ? 'Lavish Medical Spa' : ($buyer?->name ?? ($data['purchaser_name'] ?? null)),
                 'recipient_name' => $data['recipient_name'] ?? null, 'recipient_phone' => $phone, 'recipient_email' => $data['recipient_email'] ?? null,
                 'recipient_client_id' => $data['recipient_client_id'] ?? ($phone ? Client::query()->where('phone', $phone)->value('id') : null),
                 'message' => $data['message'] ?? null, 'delivery' => 'print', 'expires_at' => $data['expires_at'] ?? null,
             ]);
-            if ($buyer) {
+            if ($buyer && ! $promo) {
                 $payments->recordManual($payments->createFor($card, $buyer, $value, $card->label()), $method, $by);
             } else {
                 $this->activate($card->refresh(), $by);
             }
-            AuditLog::record($by, 'gift_card.stock_sold', 'gift_card', $card->id, null, ['status' => 'in_stock'], ['value' => $value, 'method' => $method->value, 'batch' => $card->batch]);
+            AuditLog::record($by, $promo ? 'gift_card.promo' : 'gift_card.stock_sold', 'gift_card', $card->id, $data['reason'] ?? null, ['status' => 'in_stock'],
+                ['value' => $value, 'method' => $promo ? 'promo' : $method->value, 'batch' => $card->batch]);
 
             return $card->refresh();
         });
@@ -214,6 +216,7 @@ class GiftCardService
     {
         return GiftCard::create([
             'code_hash' => self::hash($code), 'code_last4' => substr(self::normalize($code), -4),
+            'code_encrypted' => $code, // printed on the card anyway; kept (encrypted) so staff can show / re-print its barcode
             'type' => 'monetary', 'initial_value' => 0, 'balance' => 0, 'status' => 'in_stock',
             'design' => $design ?: 'classic', 'delivery' => 'print', 'source' => 'card_stock', 'batch' => $batch,
             'physical' => true, 'sold_by' => null, 'purchaser_name' => null,
@@ -306,7 +309,7 @@ class GiftCardService
         if ($card->delivery === 'print') {
             // The buyer holds the card: tell the recipient it is active if we have their phone / email.
             $card->update(['delivered_at' => now()]);
-            $this->sendActivated($card->refresh(), null);
+            $this->sendActivated($card->refresh(), $card->code_encrypted);
             if ($card->recipient) {
                 $this->notifier->client($card->recipient, new LavishNotification('gift_card.received', 'Your Lavish gift card is active',
                     $card->label().' '.$card->maskedCode().' can be used until '.$card->expires_at?->format('j M Y').'. Show the card at the front desk.', 'card_giftcard', ['screen' => 'gift_card', 'id' => $card->id]));
@@ -319,22 +322,50 @@ class GiftCardService
     }
 
     /** "Your gift card is activated — use it from … to …" by email and / or SMS (with the code when we have it). */
+    /** Staff: send the "your gift card is activated" message again (email and / or SMS). */
+    public function resendActivated(GiftCard $card, User $by): int
+    {
+        if ($card->status !== 'active') {
+            throw BusinessRuleException::make('gift_card_not_active', 'Only active cards can be sent to the recipient.');
+        }
+        if (! $card->recipient_email && ! $card->recipient_phone) {
+            throw BusinessRuleException::make('no_recipient_contact', 'This card has no recipient email or phone.');
+        }
+        $before = $card->outboundMessages()->count();
+        $this->sendActivated($card, $card->code_encrypted);
+        AuditLog::record($by, 'gift_card.resend', 'gift_card', $card->id);
+
+        return $card->outboundMessages()->count() - $before;
+    }
+
     private function sendActivated(GiftCard $card, ?string $code): void
     {
         $from = $card->purchaser_name ?: 'Someone special';
         $value = $card->type === 'service' ? 'a '.($card->service?->name ?? 'treatment') : 'ETB '.number_format($card->initial_value);
         $period = 'from '.($card->activated_at ?? now())->format('j M Y').' to '.$card->expires_at?->format('j M Y');
         $name = $card->recipient_name ? 'Dear '.$card->recipient_name.', y' : 'Y';
-        $codeLine = $code ? " Your gift card code: {$code}. Show this code (or its barcode in the Lavish app) at the front desk." : ' Bring the card with you — we scan its barcode at the front desk.';
-        $text = "{$name}our Lavish Medical Spa gift card is activated! {$from} gave you {$value}".($card->message ? " — “{$card->message}”" : '').
-            ". You can use it for Lavish treatments {$period}.{$codeLine}";
+        $codeLine = match (true) {
+            $code && $card->physical => " Card number: {$code}. Bring the card with you — we scan its barcode at the front desk.",
+            (bool) $code => " Your gift card code: {$code}. Show this code (or its QR code in the Lavish app) at the front desk.",
+            default => ' Bring the card with you — we scan its barcode at the front desk.',
+        };
+        // A surprise: the recipient may not know about the gift until this message arrives.
+        $first = $card->recipient_name ? trim(explode(' ', $card->recipient_name)[0]) : null;
+        $text = '🎁 Surprise'.($first ? ", {$first}" : '')."! {$from} sent you a Lavish Medical Spa gift card: {$value}".($card->message ? " — “{$card->message}”" : '').
+            ". Use it for Lavish treatments {$period}.{$codeLine}";
 
         if ($card->recipient_email) {
-            $this->messenger->email($card->recipient_email, 'Your Lavish gift card is activated', $text."
-
-Lavish Medical Spa", $card);
+            $subject = "🎁 Surprise! {$from} sent you a gift";
+            $html = view('emails.gift-card', [
+                'subject' => $subject, 'name' => $first, 'from' => $from, 'message' => $card->message,
+                'value' => $card->type === 'service' ? ($card->service?->name ?? 'A Lavish treatment') : 'ETB '.number_format($card->initial_value),
+                'period' => $period, 'physical' => (bool) $card->physical,
+                'code' => $code, 'barcode' => $code ? \App\Support\Code128::html(self::normalize($code)) : '',
+                'appUrl' => config('lavish.app_download_url'),
+            ])->render();
+            $this->messenger->emailHtml($card->recipient_email, $subject, $html, $text."\n\nLavish Medical Spa", $card);
         }
-        if ($card->recipient_phone && ($card->delivery !== 'email' || ! $card->recipient_email)) {
+        if ($card->recipient_phone) {
             $this->messenger->sms($card->recipient_phone, $text, $card, logAs: $code ? str_replace($code, '[gift card code]', $text) : null);
         }
     }

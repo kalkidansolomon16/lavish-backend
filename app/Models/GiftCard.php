@@ -69,6 +69,12 @@ class GiftCard extends Model
         return $this->belongsTo(User::class, 'activated_by');
     }
 
+    /** Emails / SMS sent about this card (activation message to the recipient…). */
+    public function outboundMessages(): \Illuminate\Database\Eloquent\Relations\MorphMany
+    {
+        return $this->morphMany(OutboundMessage::class, 'related')->latest('id');
+    }
+
     public function ledger(): HasMany
     {
         return $this->hasMany(GiftCardLedger::class)->latest('id');

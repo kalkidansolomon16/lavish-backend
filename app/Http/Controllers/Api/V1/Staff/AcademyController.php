@@ -49,6 +49,19 @@ class AcademyController extends StaffController
         return new CourseResource($course->load('teachers.user', 'modules', 'branch'));
     }
 
+    /** The session has ended: close the course (students → completed, no new enrolments). */
+    public function closeCourse(Request $request, Course $course): JsonResponse
+    {
+        $done = $this->academy->closeCourse($course, $request->user());
+
+        return response()->json(['data' => new CourseResource($course->refresh()->load('teachers.user', 'modules', 'branch')->loadCount('enrollments')), 'meta' => ['students_completed' => $done]]);
+    }
+
+    public function reopenCourse(Request $request, Course $course): CourseResource
+    {
+        return new CourseResource($this->academy->reopenCourse($course, $request->user())->load('teachers.user', 'modules', 'branch')->loadCount('enrollments'));
+    }
+
     /** Body: doctor_ids[] — the doctors who teach this course (they get the Lavish Academy portal). */
     public function setTeachers(Request $request, Course $course): CourseResource
     {
@@ -68,7 +81,7 @@ class AcademyController extends StaffController
     /** Path owners can rename / re-order modules (teachers edit the content). */
     public function updateModule(Request $request, CourseModule $module): CourseModuleResource
     {
-        $module->update($request->validate(['title' => ['sometimes', 'string', 'max:160'], 'week' => ['sometimes', 'integer', 'min:1', 'max:'.config('lavish.course_weeks')]]));
+        $module->update($request->validate(['title' => ['sometimes', 'string', 'max:160'], 'week' => ['sometimes', 'integer', 'min:1', 'max:'.max(1, (int) $module->course->weeks)]]));
 
         return new CourseModuleResource($module);
     }
@@ -151,6 +164,7 @@ class AcademyController extends StaffController
             'about' => ['nullable', 'string', 'max:4000'],
             'level' => [$req, Rule::in(['Beginner', 'Intermediate', 'Advanced'])],
             'price' => [$req, 'integer', 'min:0'],
+            'weeks' => [$req, 'integer', 'min:1', 'max:'.Course::MAX_WEEKS],
             'mode' => ['nullable', 'string', 'max:120'],
             'branch_id' => ['nullable', 'exists:branches,id'],
             'starts_on' => ['nullable', 'date'],

@@ -55,7 +55,7 @@ class GiftCardController extends StaffController
 
     public function show(GiftCard $giftCard): GiftCardResource
     {
-        return new GiftCardResource($giftCard->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator'));
+        return new GiftCardResource($giftCard->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator', 'outboundMessages'));
     }
 
     /**
@@ -70,7 +70,15 @@ class GiftCardController extends StaffController
         }
         $card = $this->cards->activateByStaff($giftCard, $request->user(), isset($data['method']) ? PaymentMethod::from($data['method']) : null, $payments);
 
-        return new GiftCardResource($card->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator'));
+        return new GiftCardResource($card->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator', 'outboundMessages'));
+    }
+
+    /** Send the "your gift card is activated" message to the recipient again. */
+    public function resend(Request $request, GiftCard $giftCard): GiftCardResource
+    {
+        $this->cards->resendActivated($giftCard, $request->user());
+
+        return new GiftCardResource($giftCard->refresh()->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator', 'outboundMessages'));
     }
 
     /** Use the card at the visit: { amount, service_id?, note? } (a treatment card is used up in one go). */
@@ -83,7 +91,7 @@ class GiftCardController extends StaffController
         ]);
         $card = $this->cards->useAtDesk($giftCard, (int) ($data['amount'] ?? 0), isset($data['service_id']) ? Service::find($data['service_id']) : null, $data['note'] ?? null, $request->user());
 
-        return new GiftCardResource($card->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator'));
+        return new GiftCardResource($card->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator', 'outboundMessages'));
     }
 
     /**
@@ -144,6 +152,19 @@ class GiftCardController extends StaffController
     }
 
     /** Cards already printed with their own numbers (one per line / comma-separated, or from a CSV column). */
+    /**
+     * The numbers of a printed batch, to save the print file again (?batch=). Cards made before numbers were kept
+     * can't be re-printed (count in meta.missing).
+     */
+    public function batchCodes(Request $request): JsonResponse
+    {
+        $data = $request->validate(['batch' => ['required', 'string', 'max:40']]);
+        $cards = GiftCard::query()->where('batch', $data['batch'])->where('physical', true)->orderBy('id')->get();
+        $codes = $cards->map(fn (GiftCard $c) => $c->code_encrypted)->filter()->values();
+
+        return response()->json(['data' => ['batch' => $data['batch'], 'codes' => $codes], 'meta' => ['total' => $cards->count(), 'missing' => $cards->count() - $codes->count()]]);
+    }
+
     public function importStock(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -161,10 +182,11 @@ class GiftCardController extends StaffController
     {
         $data = $request->validate([
             'code' => ['required', 'string', 'max:40'],
-            'type' => ['required', Rule::in(['monetary', 'service'])],
-            'amount' => ['required_if:type,monetary', 'nullable', 'integer', 'min:100', 'max:500000'],
+            'type' => ['required', Rule::in(['monetary', 'service', 'promo'])], // promo = free card (managers, with a reason)
+            'amount' => ['required_unless:type,service', 'nullable', 'integer', 'min:100', 'max:500000'],
             'service_id' => ['required_if:type,service', 'nullable', 'exists:services,id'],
-            'method' => ['required', Rule::in(PaymentMethod::desk())],
+            'method' => ['required_unless:type,promo', 'nullable', Rule::in(PaymentMethod::desk())],
+            'reason' => ['required_if:type,promo', 'nullable', 'string', 'max:255'],
             'purchaser_client_id' => ['nullable', 'exists:clients,id'],
             'purchaser_name' => ['nullable', 'string', 'max:120'],
             'recipient_name' => ['nullable', 'string', 'max:120'],
@@ -174,9 +196,10 @@ class GiftCardController extends StaffController
             'message' => ['nullable', 'string', 'max:300'],
             'expires_at' => ['nullable', 'date', 'after:today'],
         ]);
-        $card = $this->cards->sellStock($data['code'], $data, PaymentMethod::from($data['method']), $request->user(), $payments);
+        abort_if($data['type'] === 'promo' && ! $request->user()->hasPermission('giftcards.promo'), 403, 'Only managers can give free promotional cards.');
+        $card = $this->cards->sellStock($data['code'], $data, PaymentMethod::from($data['method'] ?? 'cash'), $request->user(), $payments);
 
-        return new GiftCardResource($card->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator'));
+        return new GiftCardResource($card->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator', 'outboundMessages'));
     }
 
     /** Find a card by its code (typed or scanned) to see balance and history. Rate-limited. */
@@ -186,7 +209,7 @@ class GiftCardController extends StaffController
         $card = $this->cards->findByCode($data['code']);
         abort_unless($card, 404, 'No gift card has that code.');
 
-        return new GiftCardResource($card->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator'));
+        return new GiftCardResource($card->load('service', 'seller', 'activator', 'payment', 'purchaser', 'recipient', 'ledger.creator', 'outboundMessages'));
     }
 
     /** Void a lost card and (by default) reissue its balance under a new code. */

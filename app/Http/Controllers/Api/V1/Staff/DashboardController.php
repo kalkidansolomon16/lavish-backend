@@ -92,6 +92,7 @@ class DashboardController extends StaffController
         $stat = fn (string $key, string $label, int $value, bool $highlight = false, string $format = 'number') => compact('key', 'label', 'value', 'highlight', 'format');
         $openOrders = fn () => Order::query()->whereIn('status', OrderStatus::openValues())->count();
         $openComplaints = fn () => Complaint::query()->where('status', '!=', ComplaintStatus::Resolved)->count();
+        $newMembers = fn () => \App\Models\ClientLoyalty::query()->where('joined_at', '>=', now()->subDays(7))->count();
         $lowStock = fn () => Product::query()->active()->withStock()->get()->filter(fn ($p) => $p->stockTotal() <= $p->reorder_level)->count();
 
         return match ($portal) {
@@ -100,18 +101,21 @@ class DashboardController extends StaffController
                 $stat('pending_appointments', 'Pending appointments', Appointment::query()->where('status', AppointmentStatus::Pending)->count()),
                 $stat('orders_in_progress', 'Orders in progress', $openOrders()),
                 $stat('open_complaints', 'Open complaints', $openComplaints()),
+                $stat('new_members', 'New Rewards members (7 days)', $newMembers()),
             ],
             'gm' => [
                 $stat('open_complaints', 'Open complaints', $openComplaints(), true),
                 $stat('staff', 'Staff & doctors', User::query()->where('type', 'staff')->where('status', 'active')->count()),
                 $stat('reorder', 'Products to reorder', $lowStock()),
                 $stat('certificates_to_issue', 'Certificates to issue', Enrollment::query()->where('status', EnrollmentStatus::Completed)->doesntHave('certificate')->count()),
+                $stat('new_members', 'New Rewards members (7 days)', $newMembers()),
             ],
             'reception' => [
                 $stat('awaiting_approval', 'Awaiting approval', Appointment::query()->where('status', AppointmentStatus::Pending)->count(), true),
                 $stat('today', 'Today’s appointments', Appointment::query()->where('status', AppointmentStatus::Approved)->whereBetween('starts_at', [$today, $today->endOfDay()])->count()),
                 $stat('unpaid', 'Unpaid invoices', Payment::query()->whereIn('status', [PaymentStatus::Unpaid, PaymentStatus::Failed])->count()),
                 $stat('not_on_app', 'Not on the app yet', Client::query()->whereNull('user_id')->count()),
+                $stat('new_members', 'New Rewards members (7 days)', $newMembers()),
             ],
             'ecommerce' => [
                 $stat('orders_in_progress', 'Orders in progress', $openOrders(), true),

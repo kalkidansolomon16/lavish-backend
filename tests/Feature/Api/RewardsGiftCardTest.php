@@ -217,7 +217,7 @@ class RewardsGiftCardTest extends TestCase
         $this->assertNotNull($card->activated_at);
         $this->assertNotNull($card->delivered_at);
         $sms = OutboundMessage::where('related_type', 'gift_card')->where('related_id', $card->id)->first();
-        $this->assertStringContainsString('activated', $sms->body);
+        $this->assertStringContainsString('Surprise', $sms->body);
         $this->assertStringContainsString('to '.$card->expires_at->format('j M Y'), $sms->body);
         $this->assertStringNotContainsString($code, $sms->body); // the code is not kept in the message log
         $this->postJson("/api/v1/staff/gift-cards/{$card->id}/activate")->assertStatus(422); // only once
@@ -327,19 +327,20 @@ class RewardsGiftCardTest extends TestCase
         // Not a member until reception enrols her; she can't join from the app.
         $this->as('+251912778899');
         $this->getJson('/api/v1/client/rewards')->assertOk()->assertJsonPath('data.member', false);
-        // Asking to join from the app sends a request to reception.
-        $this->postJson('/api/v1/client/rewards/join', ['note' => 'I come every month'])->assertCreated()
-            ->assertJsonPath('data.member', false)->assertJsonPath('data.requested_at', fn ($v) => $v !== null);
-        $this->assertTrue(User::where('phone', self::RECEPTION)->first()->notifications()->get()->contains(fn ($n) => $n->data['type'] === 'rewards.join_requested'));
         $this->postJson('/api/v1/client/rewards/requests', ['kind' => 'treatment', 'points' => 10])->assertStatus(422)->assertJsonPath('code', 'not_member');
-
-        $this->as(self::RECEPTION);
+        // "I want to become a Lavish Rewards member" → a member straight away, with a member number for the barcode.
         $client = Client::where('phone', '+251912778899')->first();
-        $this->getJson('/api/v1/staff/rewards/members?requests=1')->assertOk()->assertJsonPath('data.0.client.id', $client->id)
-            ->assertJsonPath('data.0.request_note', 'I come every month')->assertJsonPath('meta.join_requests', 1);
-        $this->postJson('/api/v1/staff/rewards/enrol', ['client_id' => $client->id, 'note' => 'Asked at the desk'])->assertCreated()
-            ->assertJsonPath('data.rewards.member', true);
+        $number = $this->postJson('/api/v1/client/rewards/join')->assertCreated()
+            ->assertJsonPath('data.member', true)->json('data.member_number');
+        $this->assertSame('LVM'.str_pad((string) $client->id, 7, '0', STR_PAD_LEFT), $number);
         $this->assertSame(200, $this->balance('+251912778899')); // welcome points (the rule can be set to 0)
+        $this->postJson('/api/v1/client/rewards/join')->assertStatus(422)->assertJsonPath('code', 'already_member');
+
+        // Reception is told, and scanning the member barcode finds her.
+        $this->assertTrue(User::where('phone', self::RECEPTION)->first()->notifications()->get()->contains(fn ($n) => $n->data['type'] === 'rewards.joined_app'));
+        $this->as(self::RECEPTION);
+        $this->getJson('/api/v1/staff/rewards/members?q='.$number)->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.client.id', $client->id)->assertJsonPath('data.0.joined_in_app', true);
         $this->postJson('/api/v1/staff/rewards/enrol', ['client_id' => $client->id])->assertStatus(422)->assertJsonPath('code', 'already_member');
         $this->assertSame(200, $this->getJson("/api/v1/staff/rewards/clients/{$client->id}")->json('data.history.0.balance_after'));
 

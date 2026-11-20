@@ -131,7 +131,11 @@ class PointsRequestAndCardUseTest extends TestCase
         $card = GiftCard::where('batch', 'Test')->first();
         $mail = OutboundMessage::where('channel', 'email')->where('related_id', $card->id)->first();
         $this->assertSame('liya@example.com', $mail->to);
-        $this->assertStringContainsString('activated', $mail->body);
+        $this->assertStringContainsString('Surprise', $mail->body);
+        $this->assertStringContainsString(str_replace('-', '', $code), str_replace('-', '', $mail->body)); // the card number is in the message
+        // Reception sees the message in the card's details and can send it again.
+        $this->getJson("/api/v1/staff/gift-cards/{$card->id}")->assertOk()->assertJsonPath('data.messages.0.channel', 'email');
+        $this->postJson("/api/v1/staff/gift-cards/{$card->id}/resend")->assertOk()->assertJsonCount(2, 'data.messages');
 
         // Liya comes in: reception scans the card, sees it, uses ETB 2,000 then the last 1,000.
         $hydra = Service::where('name', 'Signature HydraFacial')->first();
