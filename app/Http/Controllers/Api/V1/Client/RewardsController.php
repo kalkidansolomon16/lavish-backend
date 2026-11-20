@@ -33,14 +33,13 @@ class RewardsController extends ClientController
         return response()->json(['data' => $this->loyalty->dashboard($this->client($request))]);
     }
 
-    /** Ask to join Lavish Rewards. Reception enrols the client (or declines); body: { note? }. */
+    /** "I want to become a Lavish Rewards member": joins straight away (reception is notified). */
     public function join(Request $request): JsonResponse
     {
-        $data = $request->validate(['note' => ['nullable', 'string', 'max:255']]);
         $client = $this->client($request);
-        $this->loyalty->requestMembership($client, $data['note'] ?? null);
+        $this->loyalty->joinFromApp($client);
 
-        return response()->json(['data' => $this->loyalty->dashboard($client), 'message' => 'Request sent. Lavish will enrol you and let you know.'], 201);
+        return response()->json(['data' => $this->loyalty->dashboard($client), 'message' => 'Welcome to Lavish Rewards!'], 201);
     }
 
     /** My requests to use points, newest first. */

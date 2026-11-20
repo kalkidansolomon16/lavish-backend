@@ -135,6 +135,34 @@ class LoyaltyService
         return $m->refresh();
     }
 
+    /**
+     * The client taps "I want to become a Lavish Rewards member" in the app: enrolled straight away (no approval);
+     * reception / managers are told and see them in the members list.
+     */
+    public function joinFromApp(Client $client): ClientLoyalty
+    {
+        if ($this->isMember($client)) {
+            throw BusinessRuleException::make('already_member', 'You are already a Lavish Rewards member.');
+        }
+        $m = $this->join($client, null, 'Joined in the app');
+        $this->notifier->staff('rewards.enroll', new LavishNotification('rewards.joined_app', 'New Lavish Rewards member',
+            "{$client->name} joined Lavish Rewards in the app. Member no. ".self::memberNumber($client->id).'.', 'stars', null, '/rewards?tab=clients'));
+
+        return $m;
+    }
+
+    /** The number on the member's barcode card (scanned at reception to find the member). */
+    public static function memberNumber(int $clientId): string
+    {
+        return 'LVM'.str_pad((string) $clientId, 7, '0', STR_PAD_LEFT);
+    }
+
+    /** "LVM0000012" → 12, or null. */
+    public static function clientIdFromMemberNumber(string $s): ?int
+    {
+        return preg_match('/^\s*LVM0*(\d+)\s*$/i', $s, $m) ? (int) $m[1] : null;
+    }
+
     /** Points held by requests that are still open (not yet taken, but not available either). */
     public function heldPoints(Client $client): int
     {
@@ -599,6 +627,7 @@ class LoyaltyService
 
         return [
             'member' => (bool) $m->joined_at,
+            'member_number' => $m->joined_at ? self::memberNumber($client->id) : null,   // shown as a barcode in the app
             'joined_at' => $m->joined_at?->toIso8601String(),
             'requested_at' => $m->requested_at?->toIso8601String(),   // asked to join in the app, waiting for reception
             'declined_reason' => $m->declined_reason,

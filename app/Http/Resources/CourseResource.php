@@ -32,6 +32,7 @@ class CourseResource extends JsonResource
             'modules' => $this->when($staff && $this->relationLoaded('modules'), fn () => CourseModuleResource::collection($this->modules)),
             'enrollments_count' => $this->when($staff && isset($this->enrollments_count), fn () => $this->enrollments_count),
             'active' => $this->when($staff, $this->active),
+            'closed_at' => $this->closed_at?->toIso8601String(),   // the session ended and the course was closed
         ];
     }
 }

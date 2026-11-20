@@ -109,4 +109,28 @@ class AcademyTest extends TestCase
         $this->getJson("/api/v1/student/enrollments/{$enrollment->id}")->assertJsonPath('data.locked', false);
         $this->getJson("/api/v1/student/modules/{$module->id}")->assertOk();
     }
+
+    public function test_courses_have_their_own_length_and_are_closed_when_the_session_ends(): void
+    {
+        $this->as(self::GM);
+        $id = $this->postJson('/api/v1/staff/academy/courses', ['title' => 'Laser Basics', 'level' => 'Beginner', 'price' => 9000, 'weeks' => 3])
+            ->assertCreated()->assertJsonPath('data.weeks', 3)->json('data.id');
+        foreach (['One', 'Two', 'Three', 'Four'] as $t) {
+            $this->postJson("/api/v1/staff/academy/courses/{$id}/modules", ['title' => $t])->assertCreated();
+        }
+        $this->assertSame(4, Course::find($id)->weeks); // adding a 4th module made it 4 weeks
+
+        $eden = User::where('phone', self::EDEN)->first();
+        $enrollment = $eden->enrollments()->where('status', 'active')->first();
+        $course = $enrollment->course;
+        $this->postJson("/api/v1/staff/academy/courses/{$course->id}/close")->assertOk()
+            ->assertJsonPath('data.closed_at', fn ($v) => $v !== null)->assertJsonPath('meta.students_completed', fn ($n) => $n >= 1);
+        $this->assertSame('completed', $enrollment->refresh()->status->value);
+        $this->assertTrue($eden->notifications()->get()->contains(fn ($n) => $n->data['type'] === 'academy.course_closed'));
+        // No new students in a closed course; it can be reopened.
+        $this->as(self::CEO);
+        $this->postJson('/api/v1/staff/academy/enrollments', ['name' => 'New Student', 'phone' => '0918000077', 'course_id' => $course->id, 'via' => 'in_person'])
+            ->assertStatus(422)->assertJsonPath('code', 'course_closed');
+        $this->postJson("/api/v1/staff/academy/courses/{$course->id}/reopen")->assertOk()->assertJsonPath('data.closed_at', null);
+    }
 }

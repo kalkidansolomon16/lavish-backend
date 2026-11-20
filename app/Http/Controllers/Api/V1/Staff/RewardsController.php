@@ -196,6 +196,8 @@ class RewardsController extends StaffController
     public function members(Request $request): JsonResponse
     {
         $search = $request->string('q')->trim()->value();
+        // A scanned member card (LVM0000012) finds that member directly.
+        $memberId = $search ? LoyaltyService::clientIdFromMemberNumber($search) : null;
         $q = Client::query()->select('clients.*')
             ->leftJoin('client_loyalty', 'client_loyalty.client_id', '=', 'clients.id')
             ->with('loyalty.tier:id,name,key')
@@ -204,8 +206,9 @@ class RewardsController extends StaffController
             ->when($request->boolean('requests'), fn ($q) => $q->whereNull('client_loyalty.joined_at')->whereNotNull('client_loyalty.requested_at'))
             ->when(! $search && ! $request->boolean('all') && ! $request->boolean('requests'), fn ($q) => $q->whereNotNull('client_loyalty.joined_at'))
             ->when($request->integer('tier_id'), fn ($q, $t) => $q->where('client_loyalty.tier_id', $t))
-            ->when($search, fn ($q, $t) => $q->where(fn ($w) => $w->where('clients.name', 'like', "%{$t}%")
-                ->orWhere('clients.phone', 'like', '%'.(ltrim(preg_replace('/\D/', '', $t), '0') ?: '#').'%')))
+            ->when($memberId, fn ($q) => $q->where('clients.id', $memberId))
+            ->when($search && ! $memberId, fn ($q) => $q->where(fn ($w) => $w->where('clients.name', 'like', "%{$search}%")
+                ->orWhere('clients.phone', 'like', '%'.(ltrim(preg_replace('/\D/', '', $search), '0') ?: '#').'%')))
             ->orderByDesc('client_loyalty.points_12m')->orderBy('clients.name');
         $page = $q->paginate($this->perPage($request, 30));
 
@@ -217,11 +220,13 @@ class RewardsController extends StaffController
                 'points_12m' => (int) $c->loyalty?->points_12m,
                 'lifetime_points' => (int) $c->loyalty?->lifetime_points,
                 'member' => (bool) $c->loyalty?->joined_at,
+                'member_number' => $c->loyalty?->joined_at ? LoyaltyService::memberNumber($c->id) : null,
+                'joined_in_app' => $c->loyalty?->joined_at && $c->loyalty?->enrol_note === 'Joined in the app',
                 'joined_at' => $c->loyalty?->joined_at?->toIso8601String(),
                 'requested_at' => $c->loyalty?->requested_at?->toIso8601String(),
                 'request_note' => $c->loyalty?->request_note,
             ]),
-            'meta' => ['total' => $page->total(), 'current_page' => $page->currentPage(), 'last_page' => $page->lastPage(),
+            'meta' => ['total' => $page->total(), 'current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'per_page' => $page->perPage(),
                 'join_requests' => ClientLoyalty::query()->whereNull('joined_at')->whereNotNull('requested_at')->count()],
         ]);
     }

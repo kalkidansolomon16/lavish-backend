@@ -12,15 +12,17 @@ class Course extends Model
 {
     protected $guarded = ['id'];
 
-    /** Every course is config('lavish.course_weeks') weeks long (5), whatever is sent. */
-    protected static function booted(): void
-    {
-        static::saving(fn (Course $c) => $c->weeks = (int) config('lavish.course_weeks'));
-    }
+    /** The longest a course can be (weeks). Each course sets its own length. */
+    public const MAX_WEEKS = 52;
 
     protected function casts(): array
     {
-        return ['starts_on' => 'date', 'active' => 'boolean', 'price' => 'integer', 'weeks' => 'integer'];
+        return ['starts_on' => 'date', 'active' => 'boolean', 'price' => 'integer', 'weeks' => 'integer', 'closed_at' => 'datetime'];
+    }
+
+    public function isClosed(): bool
+    {
+        return $this->closed_at !== null;
     }
 
     public function teachers(): BelongsToMany

@@ -245,9 +245,11 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/', 'store')->middleware('permission:giftcards.sell|giftcards.promo');
             Route::post('stock/generate', 'generateStock')->middleware('permission:giftcards.stock');
             Route::post('stock/import', 'importStock')->middleware('permission:giftcards.stock');
+            Route::get('stock/batch-codes', 'batchCodes')->middleware('permission:giftcards.stock');
             Route::post('stock/sell', 'sellStock')->middleware(['permission:giftcards.sell', 'throttle:giftcode']);
             Route::post('lookup', 'lookup')->middleware(['permission:giftcards.sell|giftcards.activate|giftcards.use|payments.collect', 'throttle:giftcode']);
             Route::post('{giftCard}/activate', 'activate')->middleware('permission:giftcards.activate');
+            Route::post('{giftCard}/resend', 'resend')->middleware('permission:giftcards.activate|giftcards.sell');
             Route::post('{giftCard}/use', 'useCard')->middleware('permission:giftcards.use');
             Route::get('{giftCard}', 'show')->middleware('permission:page.giftcards');
             Route::post('{giftCard}/void', 'void')->middleware('permission:giftcards.void');
@@ -310,6 +312,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::middleware('permission:academy.paths')->group(function () {
                 Route::patch('courses/{course}', 'updateCourse');
                 Route::put('courses/{course}/teachers', 'setTeachers');
+                Route::post('courses/{course}/close', 'closeCourse');
+                Route::post('courses/{course}/reopen', 'reopenCourse');
                 Route::post('courses/{course}/modules', 'addModule');
                 Route::patch('modules/{module}', 'updateModule');
                 Route::delete('modules/{module}', 'destroyModule');

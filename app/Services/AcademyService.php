@@ -44,6 +44,9 @@ class AcademyService
     {
         $phone = Phone::normalize($data['phone']);
         $course = Course::query()->findOrFail($data['course_id']);
+        if ($course->isClosed()) {
+            throw BusinessRuleException::make('course_closed', 'This course is closed — its session has ended. Enrol the student in another course.');
+        }
 
         $result = DB::transaction(function () use ($data, $by, $phone, $course) {
             $student = User::query()->where('phone', $phone)->first();
@@ -130,15 +133,56 @@ class AcademyService
         });
     }
 
+    /** Adds the next week's module. A course can be any length; adding past its length makes it one week longer. */
     public function addModule(Course $course, string $title): CourseModule
     {
         $week = (int) $course->modules()->max('week') + 1;
-        $max = (int) config('lavish.course_weeks');
-        if ($week > $max) {
-            throw BusinessRuleException::make('course_full', "Courses are {$max} weeks long — this course already has a module for every week.");
+        if ($week > Course::MAX_WEEKS) {
+            throw BusinessRuleException::make('course_full', 'A course can have at most '.Course::MAX_WEEKS.' weeks.');
+        }
+        if ($week > (int) $course->weeks) {
+            $course->update(['weeks' => $week]);
         }
 
         return $course->modules()->create(['week' => $week, 'title' => $title, 'published' => false]);
+    }
+
+    /**
+     * The course session has ended: the CEO / General Manager closes it. No new enrolments; every active student is
+     * marked completed (so certificates can be issued) and told. Returns how many students were completed.
+     */
+    public function closeCourse(Course $course, User $by): int
+    {
+        if ($course->isClosed()) {
+            throw BusinessRuleException::make('course_closed', 'This course is already closed.');
+        }
+        $students = DB::transaction(function () use ($course, $by) {
+            $course->update(['closed_at' => now(), 'closed_by' => $by->id, 'active' => false]);
+            $active = $course->enrollments()->where('status', \App\Enums\EnrollmentStatus::Active)->with('student')->get();
+            foreach ($active as $e) {
+                $e->update(['status' => \App\Enums\EnrollmentStatus::Completed, 'completed_at' => now(), 'progress' => 100]);
+            }
+
+            return $active;
+        });
+        foreach ($students as $e) {
+            if ($e->student) {
+                $e->student->notify(new LavishNotification('academy.course_closed', 'Course completed',
+                    "{$course->title} has finished — congratulations! Lavish Academy will issue your certificate.", 'school', ['screen' => 'my-course', 'id' => $e->id]));
+            }
+        }
+        \App\Models\AuditLog::record($by, 'academy.course_closed', 'course', $course->id, null, null, ['students_completed' => $students->count()]);
+
+        return $students->count();
+    }
+
+    /** Opens a closed course again (e.g. closed by mistake). Students stay completed. */
+    public function reopenCourse(Course $course, User $by): Course
+    {
+        $course->update(['closed_at' => null, 'closed_by' => null]);
+        \App\Models\AuditLog::record($by, 'academy.course_reopened', 'course', $course->id);
+
+        return $course;
     }
 
     public function publishModule(CourseModule $module, bool $published): CourseModule

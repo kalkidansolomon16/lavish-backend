@@ -82,19 +82,20 @@ class PayBeforeLeavingTest extends TestCase
         $this->assertStringContainsString('Avoid the sun', $mail->body);
     }
 
-    public function test_reception_can_decline_a_request_to_join(): void
+    public function test_printed_card_keeps_its_number_for_the_barcode_and_can_be_a_promo_card(): void
     {
-        $this->as('+251922115566'); // Rahel is a member in the demo — use Almaz? She has no app account, so make a fresh client.
-        $this->postJson('/api/v1/auth/register', ['name' => 'Selam Test', 'phone' => '0912000333', 'password' => 'secret123', 'password_confirmation' => 'secret123'])->assertCreated();
-        $this->postJson('/api/v1/auth/register/verify', ['phone' => '0912000333', 'code' => '123456'])->assertCreated();
-        $this->as('+251912000333');
-        $this->postJson('/api/v1/client/rewards/join')->assertCreated();
-        $client = Client::where('phone', '+251912000333')->first();
+        $this->as(self::GM);
+        $code = $this->postJson('/api/v1/staff/gift-cards/stock/generate', ['count' => 1, 'batch' => 'Promo'])->assertCreated()->json('data.codes.0');
+        $this->getJson('/api/v1/staff/gift-cards?status=active,in_stock')->assertOk()->assertJsonPath('data.0.card_number', $code);
+        // The batch's print file can be saved again later.
+        $this->getJson('/api/v1/staff/gift-cards/stock/batch-codes?batch=Promo')->assertOk()->assertJsonPath('data.codes.0', $code)->assertJsonPath('meta.missing', 0);
 
+        // Reception can't give a free card; a manager can, with a reason.
         $this->as(self::RECEPTION);
-        $this->postJson("/api/v1/staff/rewards/clients/{$client->id}/decline-request", ['reason' => 'Please come in for your first visit'])->assertOk()
-            ->assertJsonPath('data.join_request', null);
-        $this->as('+251912000333');
-        $this->getJson('/api/v1/client/rewards')->assertJsonPath('data.requested_at', null)->assertJsonPath('data.declined_reason', 'Please come in for your first visit');
+        $this->postJson('/api/v1/staff/gift-cards/stock/sell', ['code' => $code, 'type' => 'promo', 'amount' => 1000, 'reason' => 'Raffle'])->assertForbidden();
+        $this->as(self::GM);
+        $this->postJson('/api/v1/staff/gift-cards/stock/sell', ['code' => $code, 'type' => 'promo', 'amount' => 1000, 'reason' => 'Raffle winner',
+            'recipient_name' => 'Winner', 'recipient_email' => 'winner@example.com', 'message' => 'Congratulations!'])
+            ->assertOk()->assertJsonPath('data.status', 'active')->assertJsonPath('data.type', 'promo')->assertJsonPath('data.balance', 1000);
     }
 }

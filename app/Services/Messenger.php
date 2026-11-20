@@ -35,6 +35,16 @@ class Messenger
         return $this->record('email', $to, $subject, $body, $related, fn () => Mail::raw($body, fn ($m) => $m->to($to)->subject($subject)));
     }
 
+    /** A designed (HTML) email with a plain-text version for mail apps that don't show HTML. */
+    public function emailHtml(?string $to, string $subject, string $html, string $text, ?Model $related = null): ?OutboundMessage
+    {
+        if (! $to) {
+            return null;
+        }
+
+        return $this->record('email', $to, $subject, $text, $related, fn () => Mail::html($html, fn ($m) => $m->to($to)->subject($subject)));
+    }
+
     private function record(string $channel, string $to, ?string $subject, string $body, ?Model $related, callable $send): OutboundMessage
     {
         $status = 'sent';
